@@ -144,7 +144,6 @@ head(control_clean)
 
 ```{r train, message=F, warning=F}
 controltb <- control_clean %>%
-  dplyr::filter(Register == "PcW") %>%
   dplyr::select(YearWriting, Text, Datecat) %>%
   dplyr::mutate(Text = stringr::str_squish(Text)) %>%
   dplyr::rowwise() %>%
@@ -161,7 +160,7 @@ tab03 <- controltb %>%
                    Types = sum(Types),
                    Tokens = sum(Tokens),
                    MeanLength = round(Tokens/Letters, 1))
-readr::write_delim(tab01, here::here("tables", "tab03.txt"), delim = "\t")
+readr::write_delim(tab03, here::here("tables", "tab03.txt"), delim = "\t")
 # inspect
 tab03
 ```

@@ -1,0 +1,4 @@
+Datecat	Letters	Types	Tokens	MeanLength
+1788-1800	1790	190871	279218	156
+1881-1900	2	172	215	107.5
+unknown	35	2777	3670	104.9
