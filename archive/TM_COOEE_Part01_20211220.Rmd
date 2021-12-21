@@ -1,0 +1,262 @@
+---
+title: "Analysis of the Corpus of Oz Early English - Part 1: Data Preparation"
+author: "Anonymous"
+date: "`r format(Sys.time(), '%Y-%m-%d')`"
+output:
+  bookdown::html_document2: default
+bibliography: Bibliography.bib
+link-citations: yes
+---
+
+# Introduction
+
+This document shows an analysis of Corpus of Oz Early English  (COOEE) [@fritz2004cooee]. 
+
+## Aims
+
+* Find keywords  (part 2)
+
+* Check for distribution of keywords by date (mosaic plot)  (part 2)
+
+* Create network of keywords (network analysis)  (part 2)
+
+* Find topics (topic modeling) (part 3)
+
+* Error analysis (misspelled words, words not in dictionary) (part 4)
+
+# Data Processing
+
+In a first step, the session is prepared by installing packages.
+
+
+```{r ampause_01_01, eval = F, message=FALSE, warning=FALSE}
+# load packages
+install.packages("tidyverse")
+install.packages("tidytext")
+install.packages("tidyr")
+install.packages("tm")
+install.packages("tokenizers")
+install.packages("qdap")
+install.packages("textstem")
+install.packages("corpus")
+```
+
+Now, we activate the packages, set options, load relevant functions, and defining the path to the data.
+
+```{r}
+# set options
+options(stringsAsFactors = F)
+options(scipen = 999)
+# load packages
+library(tidyverse)
+library(tidytext)
+library(tidyr)
+library(tm)
+library(tokenizers)
+library(qdap)
+library(textstem)
+library(corpus)
+# specify path to corpus
+corpuspath <- "D:\\Uni\\Korpora\\Original\\COOEE\\COOEE-single_files"
+# specify path to metadata
+metapath <- "D:\\Uni\\Korpora\\Original\\COOEE/COOEE.XLS"
+# for pos-tagging objects in R
+source("D:\\R/POStagObject.R") 
+```
+
+
+In a next step, we load and process the corpus data.
+
+
+```{r load, warning=F, message=F}
+# load corpus files
+cooeefiles = list.files(path = corpuspath, all.files = T, full.names = T, recursive = T, ignore.case = T, include.dirs = T)
+# load and unlist corpus
+cooee <- sapply(cooeefiles, function(x) {
+  x <- scan(x, what = "char", sep = "", quote = "\"", quiet = T, skipNul = T)
+  x <- stringr::str_squish(x)
+  x <- paste0(x, collapse = " ")
+  x <- unlist(x)
+} )
+# inspect data
+str(cooee)
+```
+
+Convert data into a data frame.
+
+```{r meta, warning=F, message=F}
+cooeedf <- data.frame(cooeefiles, cooee) %>%
+  dplyr::rename(Nr = colnames(.)[1],
+                Rawtext = colnames(.)[2]) %>%
+  dplyr::mutate(Nr = stringr::str_replace_all(Nr, ".*/(.*).txt", "\\1")) %>%
+  as.tibble()
+# inspect
+head(cooeedf)
+```
+
+
+Extract metadata (corpus, file, date, etc.)
+
+```{r meta, warning=F, message=F}
+meta <- readxl::read_xls(metapath)
+cnames <- as.vector(unlist(meta[1,])) %>%
+  stringr::str_remove_all(" ")
+cnames[c(14:16)] <- c("Words", "GenderAddressee", "StatusAddressee")
+meta <- meta[2:nrow(meta),]
+colnames(meta) <- cnames
+meta <- meta  %>%
+  dplyr::mutate(id = 1:nrow(.))
+# inspect
+head(meta)
+```
+
+Combine 
+
+```{r corpus, warning=F, message=F}
+# combine into table
+cooeed <- meta %>% dplyr::inner_join(cooeedf, by = "Nr")
+# inpspect
+head(cooeed)
+```
+
+Process and clean data
+
+```{r clean, warning=F, message=F}
+# clean files
+cooeed_clean <- cooeed %>%
+  dplyr::mutate(Text = Rawtext) %>%
+  dplyr::mutate(Text = stringr::str_remove_all(Text, "\\[/{0,1}.*?\\]"),
+                Text = stringr::str_remove_all(Text, "\\</{0,1}.*?\\>"),
+                Text = stringr::str_remove_all(Text, "\\{|\\}"),
+                Datecat = dplyr::case_when(as.numeric(YearWriting) < 1800 ~ "1788-1800",
+                                           as.numeric(YearWriting) < 1820 ~ "1801-1820",
+                                           as.numeric(YearWriting) < 1840 ~ "1821-1840",
+                                           as.numeric(YearWriting) < 1860 ~ "1841-1860",  
+                                           as.numeric(YearWriting) < 1880 ~ "1861-1880", 
+                                           as.numeric(YearWriting) <= 1900 ~ "1881-1900",
+                                           TRUE ~ YearWriting),
+                Datecat = factor(Datecat)) %>%
+  # Words
+  dplyr::mutate(Words = stringr::str_replace_all(Text, "\\W", " "),
+                Words = stringr::str_squish(Words),
+                Words = stringr::str_count(Words, "\\w+"))
+# inspect
+head(cooeed_clean)
+```
+
+Stemming function (from https://cran.r-project.org/web/packages/corpus/vignettes/stemmer.html)
+
+```{r}
+stem_hunspell <- function(term) {
+    # look up the term in the dictionary
+    stems <- hunspell::hunspell_stem(term)[[1]]
+
+    if (length(stems) == 0) { # if there are no stems, use the original term
+        stem <- term
+    } else { # if there are multiple stems, use the last one
+        stem <- stems[[length(stems)]]
+    }
+
+    stem
+}
+```
+
+
+
+
+```{r}
+# define stopword regex
+stopwords_regex = paste(tm::stopwords('en'), collapse = '\\b|\\b')
+stopwords_regex = paste0('\\b', stopwords_regex, '\\b')
+# remove stopwords
+cooeed_clean <- cooeed_clean %>%
+  dplyr::select(Register == "PrW") %>%
+  dplyr::mutate(Text_clean = stringr::str_replace_all(tolower(Text), stopwords_regex, ""),
+                Text_clean = stringr::str_remove_all(Text_clean, "[^[:alpha:] ]")) %>%
+  dplyr::mutate(Text_stem = sapply(Text_clean, function(x) {
+    x <- corpus::text_tokens(x, stemmer = stem_hunspell) %>%
+      paste(sep = " ") %>%
+      unlist() %>%
+      stringr::str_remove_all("[^[:alpha:] ]") %>%
+      stringr::str_remove_all("^c")
+  })
+    )
+# inspect
+head(cooeed_clean)
+```
+
+
+
+Check data
+
+```{r}
+table(cooeed_clean$Datecat)
+```
+
+## Save data (COOEE)
+
+```{r}
+base::saveRDS(cooeed_clean, file = here::here("data", "cooeed_clean.rda"))
+```
+
+
+
+# Control corpus
+
+We now generate a parallel table of data from letters not written by Irish emigrants
+
+```{r control, warning=F, message=F}
+controlpath <- "D:\\Uni\\Korpora\\Original\\A Corpus of late 18c Prose\\2468/orford.txt"
+# load and unlist corpus
+control <- scan(controlpath, what = "char", sep = "", quote = "\"", quiet = T, skipNul = T) %>%
+  stringr::str_squish() %>%
+  paste0(collapse = " ") %>%
+  stringr::str_split("<A ") %>%
+  unlist()
+control <- control %>%
+  as.data.frame() %>%
+  dplyr::rename(Rawtext = colnames(.)[1])
+# inspect
+str(control)
+```
+
+
+
+```{r control2, warning=F, message=F}
+# clean files
+control_clean <- control %>%
+  dplyr::mutate(Text = Rawtext) %>%
+  dplyr::mutate(Text = stringr::str_remove_all(Text, "\\[/{0,1}.*?\\]"),
+                Text = stringr::str_remove_all(Text, "\\</{0,1}.*?\\>"),
+                Text = stringr::str_remove_all(Text, "\\{|\\}"),
+                Text_clean = stringr::str_remove_all(Text, "[^[:alpha:] ]"),
+                Text_clean = stringr::str_replace_all(tolower(Text_clean), stopwords_regex, ""),
+                id = 1:nrow(.)) %>%
+  dplyr::mutate(Text_stem = sapply(Text_clean, function(x) {
+    x <- corpus::text_tokens(x, stemmer = stem_hunspell) %>%
+      paste(sep = " ") %>%
+      unlist() %>%
+      stringr::str_remove_all("[^[:alpha:] ]") %>%
+      stringr::str_remove_all("^c")
+  })
+    )
+# inspect data
+head(control_clean)
+```
+
+## Save data (COOEE)
+
+```{r}
+base::saveRDS(control_clean, file = here::here("data", "control_clean.rda"))
+```
+
+
+
+# Outro
+
+```{r}
+sessionInfo()
+```
+
+
+# References

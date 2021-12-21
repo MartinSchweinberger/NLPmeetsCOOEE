@@ -1,0 +1,513 @@
+---
+title: "Analysis of the Corpus of Oz Early English - Part 3: Keyword Extraction"
+author: "Anonymous"
+date: "`r format(Sys.time(), '%Y-%m-%d')`"
+output:
+  bookdown::html_document2: default
+bibliography: Bibliography.bib
+link-citations: yes
+---
+
+# Introduction
+
+This document shows an analysis of Corpus of Oz Early English  (COOEE) [@fritz2004cooee]. 
+
+## Aims
+
+* **Find keywords**
+
+* **Check for distribution of keywords by date (mosaic plot)**
+
+* **Create network of keywords (network analysis)**
+
+* Find topics (topic modeling) (part 3)
+
+* Error analysis (misspelled words, words not in dictionary) (part 4)
+
+# Set Up
+
+In a first step, the session is prepared by installing packages.
+
+
+```{r ampause_01_01, eval = F, message=FALSE, warning=FALSE}
+# load packages
+install.packages("tidyverse")
+install.packages("tidytext")
+install.packages("tidyr")
+install.packages("tm")
+install.packages("tokenizers")
+install.packages("qdap")
+install.packages("textstem")
+install.packages("corpus")
+install.packages("quanteda")
+install.packages("quanteda.textstats")
+install.packages("ngram")
+```
+
+Now, we activate the packages, set options, load relevant functions, and defining the path to the data.
+
+```{r}
+# set options
+options(stringsAsFactors = F)
+options(scipen = 999)
+# load packages
+library(tidyverse)
+library(tidytext)
+library(tidyr)
+library(tm)
+library(tokenizers)
+library(qdap)
+library(textstem)
+library(corpus)
+library(quanteda)
+library(quanteda.textstats)
+library(ngram)
+# for pos-tagging objects in R
+source("D:\\R/POStagObject.R") 
+```
+
+
+In a next step, we load and process the corpus data.
+
+
+```{r}
+# cooee
+cooee_clean  <- base::readRDS(file = here::here("data", "cooeed_clean.rda"))
+# control
+control_clean  <- base::readRDS(file = here::here("data", "control_clean.rda"))
+# inspect
+nrow(cooee_clean); nrow(control_clean)
+```
+
+# Extract Keywords
+
+Create training set
+
+```{r train, message=F, warning=F}
+train_c <- control_clean %>%
+  dplyr::mutate(Label = "nonCOOEE") %>%
+  dplyr::select(id, Text_stem, Label) 
+train_cooee <- cooeed_clean %>%
+  dplyr::mutate(Label = "COOEE") %>%
+  dplyr::select(id, Text_stem, Label)
+train <- rbind(train_cooee, train_c)
+# inspect
+head(train)
+```
+
+extract uni- to trigrams in cooee
+
+```{r}
+# tokenize, tolower, remove stopwords and create ngrams
+cooee_toks <- tokens(train_cooee$Text_stem) 
+cooee_tokngrms <- tokens_ngrams(cooee_toks, n = 1:3)
+cooee_ngrmfreq <- train_cooee %>% 
+  tidytext::unnest_ngrams(cooee_tokngrms, Text_stem, n = 3, n_min = 1, ngram_delim = "_") %>% 
+  dplyr::count(cooee_tokngrms) %>%
+  dplyr::rename("ngram" = colnames(.)[1],
+                "cooee" = colnames(.)[2])
+# inspect
+cooee_ngrmfreq
+```
+
+extract uni- to trigrams in corpus of late 18 century prose
+
+```{r}
+# tokenize, tolower, remove stopwords and create ngrams
+c_toks <- tokens(train_c$Text_stem) 
+c_tokngrms <- tokens_ngrams(c_toks, n = 1:3)
+c_ngrmfreq <- train_c %>% 
+  tidytext::unnest_ngrams(c_tokngrms, Text_stem, n = 3, n_min = 1, ngram_delim = "_") %>% 
+  dplyr::count(c_tokngrms) %>%
+  dplyr::rename("ngram" = colnames(.)[1],
+                "cl18p" = colnames(.)[2])
+# inspect
+c_ngrmfreq
+```
+
+combine
+
+```{r}
+ngramfreqtb <- dplyr::full_join(cooee_ngrmfreq, c_ngrmfreq, by = "ngram") %>%
+  tidyr::replace_na(list(cooee = 0, cl18p = 0))
+# inspect
+head(ngramfreqtb)
+```
+
+
+Prepare for statistical extraction of keywords
+
+```{r}
+keywordtb <- ngramfreqtb %>%
+  dplyr::mutate(Total = cooee+cl18p) %>%
+  dplyr::filter(Total > 10) %>%
+  dplyr::mutate(TotalTarget = sum(cooee),
+                TotalNonTarget = sum(cl18p),
+                NRows = length(ngram)) %>%
+  dplyr::rename(Target = cooee,
+                NonTarget = cl18p,
+                Word = ngram) %>%
+  dplyr::select(-Total)
+# inspect data
+keywordtb
+```
+
+
+
+
+Perform statistics
+
+```{r covtwit_01_12, echo=T, eval = T, message=FALSE, warning=FALSE}
+source(here::here("scripts", "CoocStatzFisher.R"))
+# extract keywords
+keywords <- CoocStatzFisher(keywordtb)
+sigkeywords <- keywords %>%
+  dplyr::filter(CorrSignificance != "n.s.",
+                Type == "Overuse") %>%
+  dplyr::arrange(-phi)
+# inspect data
+sigkeywords$Word[1:100]
+```
+
+```{r covtwit_01_12b, echo=T, eval = T, message=FALSE, warning=FALSE}
+bigsigkeywords <- sigkeywords %>%
+  dplyr::filter(phi > .01)
+# inspect
+bigsigkeywords
+```
+
+
+
+Extract relative frequency of Irish letters
+
+```{r covtwit_01_13, echo=T, eval = T, message=FALSE, warning=FALSE}
+cooeeterms <- sigkeywords$Word
+cooee_regex <- paste0("\\b", cooeeterms, "\\b|", collapse = "")
+# extract frequencies
+cooeefreq <- cooeed_clean %>%
+  dplyr::select(Datecat, Text_stem, Words) %>%
+  dplyr::mutate(Frequency = stringr::str_count(Text_stem, cooee_regex),
+                RFrequency = Frequency/Words*100) %>%
+  dplyr::group_by(Datecat) %>%
+  dplyr::summarise(RelativeFrequency = mean(RFrequency)) %>%
+  dplyr::mutate(NumDate = 1:length(Datecat),
+                Datecat = factor(Datecat))
+# inspect data
+cooeefreq
+```
+
+
+Plot relative frequency of cooee texts
+
+```{r covtwit_01_14, echo=T, eval = T, message=FALSE, warning=FALSE}
+ggplot(cooeefreq, aes(x = NumDate, y = RelativeFrequency, label = round(RelativeFrequency, 2))) +
+  geom_bar(stat = "identity") +
+  scale_x_discrete(breaks = cooeefreq$NumDate,
+                   labels = cooeefreq$Datecat,
+                   limits = 1: max(cooeefreq$NumDate)) +
+  labs(x = "Date", y = "Relative Frequency of Keyterms\n(per 1,000 words)") +
+  theme_set(theme_bw(base_size = 10)) +
+  theme(legend.position="none",
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        axis.text.x = element_text(angle = 90, size =7.5)) +
+  geom_text(vjust=-1.6, color = "black") +
+  coord_cartesian(ylim = c(0, 400))
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Plot relative frequencies of Oz terms
+
+```{r covtwit_01_38, echo=T, eval = T, message=FALSE, warning=FALSE}
+keywordselection <- c("convicts", "aborigines", "natives", "australia", "colony", "ship")
+# extract frequencies
+kwfreqs <- cooeed_clean %>%
+  dplyr::select(YearWriting, Text_clean, Words, Datecat) %>%
+  dplyr::group_by(YearWriting) %>%
+  dplyr::summarise(Text_clean = paste(Text_clean, collapse = " "),
+                   Words = sum(Words),
+                   Datecat = Datecat) %>%
+  dplyr::ungroup() %>%
+  unnest_tokens(Word, Text_clean) %>%
+  dplyr::filter(Word %in% keywordselection) %>%
+  dplyr::group_by(Word, YearWriting) %>%
+  dplyr::summarise(NoWords = n(),
+                   Percent = NoWords/unique(Words)*100,
+                   Datecat = Datecat) %>%
+  dplyr::ungroup() %>%
+  dplyr::select(-NoWords) %>%
+  dplyr::mutate(YearWriting = factor(YearWriting),
+                NumDate = as.numeric(YearWriting),
+                Word = factor(Word))
+# inspect data
+head(kwfreqs)
+```
+
+Plot frequencies of selected keywords as line graph
+
+```{r covtwit_01_39, echo=T, eval = T, message=FALSE, warning=FALSE}
+p7d <- kwfreqs %>%
+  dplyr::mutate(YearWriting = factor(YearWriting),
+                NumDate = as.numeric(YearWriting),
+                Word = factor(Word))
+
+ggplot(p7d, aes(x = NumDate, y = Percent)) +
+  facet_wrap(vars(Word), ncol = 3, scales="free_y") +
+  geom_line(color = "gray80", size = .5) +
+  geom_smooth(se = F, span = .4, color = "gray20", size = .75) +
+  scale_x_discrete(breaks = p7d$NumDate[seq(1, length(p7d$NumDate), by = 100)],
+                   labels = p7d$YearWriting[seq(1, length(p7d$YearWriting), by = 100)],
+                   limit = 1:length(p7d$YearWriting)) +
+  labs(x = "Date", y = "Percent (of words)") +
+  theme_set(theme_bw(base_size = 12)) +
+  theme(legend.position="none",
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        axis.text.x = element_text(angle = 90, size =7))
+```
+
+With periods
+
+```{r covtwit_01_40, echo=T, eval = T, message=FALSE, warning=FALSE}
+p7d %>%
+  dplyr::group_by(Datecat, Word) %>%
+  dplyr::summarise(Percent = round(mean(Percent), 2)) %>%
+  ggplot(aes(x = Datecat, y = Percent)) +
+  facet_wrap(vars(Word), ncol = 3) +#, scales="free_y") +
+  geom_bar(stat = "identity", size = .5) +
+  labs(x = "", y = "Percent (of words)") +
+  theme_set(theme_bw(base_size = 12)) +
+  theme(legend.position="none",
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        axis.text.x = element_text(angle = 90, size =7))
+```
+
+# Keywords by Period
+
+convert data: have date, ngram, and frequencies of ngrams 
+
+```{r}
+# tokenize and create ngram freqs
+cooee_toks <- tokens(cooeed_clean$Text_stem) 
+cooee_tokngrms <- tokens_ngrams(cooee_toks, n = 1:3)
+cooee_ngrmfreq <- cooeed_clean %>%
+  dplyr::select(id, Datecat, Text_stem) %>%
+  dplyr::group_by(Datecat) %>%
+  tidytext::unnest_ngrams(cooee_tokngrms, Text_stem, n = 3, n_min = 1, ngram_delim = "_") %>% 
+  dplyr::count(cooee_tokngrms) %>%
+  dplyr::rename("Period" = colnames(.)[1],
+                "Word" = colnames(.)[2],
+                "Freq" = colnames(.)[3]) %>%
+  dplyr::rowwise() %>%
+  dplyr::mutate(Period = paste0("Period_", Period))
+# inspect
+cooee_ngrmfreq
+```
+
+convert to wide
+
+```{r}
+cooee_ngrmfreq_wd <- cooee_ngrmfreq %>%
+  tidyr::spread(Period, Freq) %>%
+  replace(is.na(.), 0)
+# inspect
+cooee_ngrmfreq_wd
+```
+
+function fro keyword extraction
+
+```{r covtwit_04_05, echo=T, eval = T, message=FALSE, warning=FALSE}
+pdperiod <- function(perioddata, Targetperiod){
+  periodtb <- perioddata %>%
+    tidyr::gather(Period, Frequency, `Period_1788-1800`:`Period_1881-1900`) %>%
+    dplyr::mutate(Period = ifelse(Period != Targetperiod, "Other", Period)) %>%
+    dplyr::group_by(Period, Word) %>%
+    dplyr::mutate(Frequency = sum(Frequency)) %>%
+    unique() %>%
+    tidyr::spread(Period, Frequency) %>%
+    dplyr::rename(Target = Targetperiod, NonTarget = Other) %>%
+    dplyr::ungroup() %>%
+    dplyr::mutate(TotalTarget = sum(Target), TotalNonTarget = sum(NonTarget),
+                  NRows = n())
+  periodkeys <- CoocStatzFisher(periodtb)
+  periodkeys <- periodkeys %>%
+    dplyr::filter(CorrSignificance != "n.s.") %>%
+    dplyr::mutate(Period = rep(Targetperiod, length(CorrSignificance)))
+  return(periodkeys)
+}
+```
+
+Extract keywords
+
+```{r covtwit_04_06, echo=T, eval = T, message=FALSE, warning=FALSE}
+keys_period1 <- pdperiod(cooee_ngrmfreq_wd, "Period_1788-1800")
+keys_period2 <- pdperiod(cooee_ngrmfreq_wd, "Period_1801-1820")
+keys_period3 <- pdperiod(cooee_ngrmfreq_wd, "Period_1821-1840")
+keys_period4 <- pdperiod(cooee_ngrmfreq_wd, "Period_1841-1860")
+keys_period5 <- pdperiod(cooee_ngrmfreq_wd, "Period_1861-1880")
+keys_period6 <- pdperiod(cooee_ngrmfreq_wd, "Period_1881-1900")
+# inspect data
+head(keys_period1)
+```
+
+
+Combine keywords
+
+```{r covtwit_04_07, echo=T, eval = T, message=FALSE, warning=FALSE}
+period_keys <- rbind(keys_period1, keys_period2, keys_period3, 
+                     keys_period4, keys_period5, keys_period6)
+# inspect data
+head(period_keys)
+```
+
+# Visualize keywords
+
+```{r covtwit_04_08, echo=T, eval = T, message=FALSE, warning=FALSE}
+p1d <- period_keys %>%
+  dplyr::mutate(Period = as.numeric(stringr::str_remove_all(Period, "Period"))) %>%
+  dplyr::filter(CorrSignificance == "p<.001") %>%
+  dplyr::filter(Word != "other") %>%
+#  dplyr::filter(phi > .001) %>%
+  dplyr::mutate(x2 = log(x2)) %>%
+  dplyr::mutate(x2 = ifelse(Type == "Overuse", x2, -x2)) 
+
+```
+
+
+```{r covtwit_04_09, echo=T, eval = T, message=FALSE, warning=FALSE}
+
+p1 <- ggplot(p1d, aes(x = Period, y = x2)) +
+#  geom_point()+
+  #geom_text(aes(label=Word),hjust=0, vjust=-1,
+  #          position=position_jitter(width=.5,height=1), size = 2) +
+  geom_text(aes(label = Word), check_overlap = TRUE, vjust = 1.5) +
+  labs(x = "Phase", y = "Association strength (logged X2)") +
+  scale_x_continuous(breaks = seq(1, 6, 1), 
+                     labels= seq(1, 6, 1), 
+                     limits = c(0.5, 6.5)) +
+  theme_set(theme_bw(base_size = 10)) +
+  theme(legend.position="none",
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        axis.text.x = element_text(angle = 0, size =7.5),
+        plot.margin = unit(c(.2, .2, .2, .2), "cm")) +
+  coord_cartesian(ylim = c(-10, 10))
+ggsave(file = here::here("images", "Keyterms_Period.png"), 
+         height = 4,  width = 6, dpi = 320)
+p1
+```
+
+# Network
+
+```{r}
+head(cooee_clean)
+```
+
+```{r}
+table(cooee_clean$PlaceWriting)
+```
+
+
+Create corpus and DTM
+
+```{r covtwit_02_03, echo=T, eval = T, message=FALSE, warning=FALSE}
+# create corpus
+cooeed_min <- cooeed_clean %>%
+  dplyr::mutate(doc_id = id,
+                text = Text_stem)
+corpus <- tm::Corpus(DataframeSource(cooeed_min))
+# compute document term matrix with terms >= minimumFrequency
+minimumFrequency <- 1
+DTM <- DocumentTermMatrix(corpus, 
+                          control = list(bounds = list(global = c(minimumFrequency, Inf))))
+# have a look at the number of documents and terms in the matrix
+dim(DTM)
+```
+
+Due to vocabulary pruning, DTM may have empty rows (problematic!): remove empty docs from DTM and metadata
+
+```{r covtwit_02_04, echo=T, eval = T, message=FALSE, warning=FALSE}
+sel_idx <- slam::row_sums(DTM) > 0
+DTM <- DTM[sel_idx, ]
+cooeed_min <- cooeed_min[sel_idx, ]
+```
+
+Reduce DTM (keywords only)
+
+```{r covtwit_01_27, echo=T, eval = T, message=FALSE, warning=FALSE}
+# clean Terms
+dimnames(DTM)$Terms <- str_remove_all(dimnames(DTM)$Terms, fixed("\"")) 
+dimnames(DTM)$Terms <- str_remove_all(dimnames(DTM)$Terms, fixed(","))
+cooeeterms_redux <- sigkeywords$Word[which(sigkeywords$Word %in% dimnames(DTM)$Terms)]
+DTM_reduced <- as.matrix(DTM[, cooeeterms_redux])
+dim(DTM_reduced)
+```
+
+Create heatmap
+
+```{r covtwit_01_28, echo=T, eval = T, message=FALSE, warning=FALSE}
+p2d <- as.matrix(DTM_reduced) %>%
+  scale() %>%
+  as.data.frame() %>%
+  dplyr::mutate(Date = rownames(.)) %>%
+  tidyr::gather(Keyword, Frequency, sigkeywords$Word[1]:sigkeywords$Word[length(sigkeywords$Word)]) %>%
+  dplyr::mutate(Date = str_replace_all(Date, "\\..*", ""),
+                Date = str_replace_all(Date, "X", ""),
+                NumDate = 1:length(Date))
+head(p2d)
+```
+
+
+```{r covtwit_01_29, echo=T, eval = T, message=FALSE, warning=FALSE}
+every_nth = function(n) {
+  return(function(x) {x[c(TRUE, rep(FALSE, n - 1))]})
+}
+ggplot(p2d, aes(x = Date, y = Keyword, fill = Frequency)) +
+  geom_tile()+
+  scale_x_discrete(breaks = every_nth(n = 5)) +
+  scale_fill_gradient(name = "Frequency",
+                      low = "#FFFFFF",
+                      high = "#012345") +
+  labs(x = "Date", y = "Keyword") +
+  theme_set(theme_bw(base_size = 12)) +
+  theme(legend.position="none",
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        axis.text.x = element_text(angle = 90, size =8)) +
+  ggsave(file = here::here("images", "Covid_lggheat.png"), 
+         height = 10,  width = 8, dpi = 320)
+```
+
+```{r covtwit_01_30, eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+library(gplots)
+m <- DTM_reduced %>%
+   scale()
+my_palette <- colorRampPalette(c("white", "white", "gray30"))(n = 1000)
+# display plot
+hm <- heatmap.2(m, col = my_palette, density.info="none", trace="none", 
+                dendrogram=c("row"), key=FALSE)
+hc <- as.hclust(hm$rowDendrogram)
+```
+
+# Outro
+
+```{r}
+sessionInfo()
+```
+
+
+# References
