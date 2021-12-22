@@ -87,7 +87,7 @@ Create training set
 train_c <- control_clean %>%
   dplyr::mutate(Label = "nonCOOEE") %>%
   dplyr::select(id, Text_clean, Label) 
-train_cooee <- cooeed_clean %>%
+train_cooee <- cooee_clean %>%
   dplyr::mutate(Label = "COOEE") %>%
   dplyr::select(id, Text_clean, Label)
 train <- rbind(train_cooee, train_c)
@@ -184,7 +184,7 @@ Extract relative frequency of Irish letters
 cooeeterms <- sigkeywords$Word
 cooee_regex <- paste0("\\b", cooeeterms, "\\b|", collapse = "")
 # extract frequencies
-cooeefreq <- cooeed_clean %>%
+cooeefreq <- cooee_clean %>%
   dplyr::select(Datecat, Text_clean, Words) %>%
   dplyr::mutate(Frequency = stringr::str_count(Text_clean, cooee_regex),
                 RFrequency = Frequency/Words*100) %>%
@@ -232,9 +232,11 @@ ggplot(cooeefreq, aes(x = NumDate, y = RelativeFrequency, label = round(Relative
 Plot relative frequencies of Oz terms
 
 ```{r covtwit_01_38, echo=T, eval = T, message=FALSE, warning=FALSE}
-keywordselection <- c("convicts", "aborigines", "natives", "australia", "colony", "ship")
+keywordselection <- c("convicts", "family", "natives", 
+                      "australia", "colony", "ship",
+                      "river", "travelled", "journey")
 # extract frequencies
-kwfreqs <- cooeed_clean %>%
+kwfreqs <- cooee_clean %>%
   dplyr::select(YearWriting, Text_clean, Words, Datecat) %>%
   dplyr::group_by(YearWriting) %>%
   dplyr::summarise(Text_clean = paste(Text_clean, collapse = " "),
@@ -267,7 +269,7 @@ p7d <- kwfreqs %>%
 ggplot(p7d, aes(x = NumDate, y = Percent)) +
   facet_wrap(vars(Word), ncol = 3, scales="free_y") +
   geom_line(color = "gray80", size = .5) +
-  geom_smooth(se = F, span = .4, color = "gray20", size = .75) +
+  geom_smooth(se = F, span = .4, color = "gray40", size = .75) +
   scale_x_discrete(breaks = p7d$NumDate[seq(1, length(p7d$NumDate), by = 100)],
                    labels = p7d$YearWriting[seq(1, length(p7d$YearWriting), by = 100)],
                    limit = 1:length(p7d$YearWriting)) +
@@ -277,6 +279,8 @@ ggplot(p7d, aes(x = NumDate, y = Percent)) +
         panel.grid.major = element_blank(), 
         panel.grid.minor = element_blank(), 
         axis.text.x = element_text(angle = 90, size =7))
+ggsave(file = here::here("images", "selected_keywords.png"), 
+         height = 7,  width = 14, dpi = 320)
 ```
 
 With periods
@@ -286,14 +290,16 @@ p7d %>%
   dplyr::group_by(Datecat, Word) %>%
   dplyr::summarise(Percent = round(mean(Percent), 2)) %>%
   ggplot(aes(x = Datecat, y = Percent)) +
-  facet_wrap(vars(Word), ncol = 3) +#, scales="free_y") +
+  facet_wrap(vars(Word), ncol = 3, scales="free_y") +
   geom_bar(stat = "identity", size = .5) +
   labs(x = "", y = "Percent (of words)") +
   theme_set(theme_bw(base_size = 12)) +
   theme(legend.position="none",
         panel.grid.major = element_blank(), 
         panel.grid.minor = element_blank(), 
-        axis.text.x = element_text(angle = 90, size =7))
+        axis.text.x = element_text(angle = 90, size =10))
+ggsave(file = here::here("images", "selected_keywords_bar.png"), 
+         height = 5,  width = 7, dpi = 320)
 ```
 
 # Keywords by Period
@@ -302,9 +308,9 @@ convert data: have date, ngram, and frequencies of ngrams
 
 ```{r}
 # tokenize and create ngram freqs
-cooee_toks <- tokens(cooeed_clean$Text_clean) 
+cooee_toks <- tokens(cooee_clean$Text_clean) 
 cooee_tokngrms <- tokens_ngrams(cooee_toks, n = 1)
-cooee_ngrmfreq <- cooeed_clean %>%
+cooee_ngrmfreq <- cooee_clean %>%
   dplyr::select(id, Datecat, Text_clean) %>%
   dplyr::group_by(Datecat) %>%
   tidytext::unnest_ngrams(cooee_tokngrms, Text_clean, n = 1, n_min = 1, ngram_delim = "_") %>% 
@@ -323,7 +329,8 @@ convert to wide
 ```{r}
 cooee_ngrmfreq_wd <- cooee_ngrmfreq %>%
   tidyr::spread(Period, Freq) %>%
-  replace(is.na(.), 0)
+  replace(is.na(.), 0) %>%
+  dplyr::filter(nchar(Word) > 2)
 # inspect
 cooee_ngrmfreq_wd
 ```
@@ -422,13 +429,13 @@ p1 <- ggplot(p1d, aes(x = Period, y = x2)) +
   geom_text(aes(label = Word), check_overlap = TRUE, vjust = 1.5) +
   labs(x = "Period", y = "Association strength (logged X2)") +
   scale_x_continuous(breaks = seq(1, 6, 1), 
-                     labels= seq(1, 6, 1), 
+                     labels= str_remove_all(names(table(period_keys$Period)), "Period_"), 
                      limits = c(0.5, 6.5)) +
   theme_set(theme_bw(base_size = 10)) +
   theme(legend.position="none",
         panel.grid.major = element_blank(), 
         panel.grid.minor = element_blank(), 
-        axis.text.x = element_text(angle = 0, size =7.5),
+        axis.text.x = element_text(angle = 0, size =10),
         plot.margin = unit(c(.2, .2, .2, .2), "cm")) +
   coord_cartesian(ylim = c(-10, 10))
 ggsave(file = here::here("images", "Keyterms_Period.png"), 
@@ -474,51 +481,12 @@ DTM_reduced <- as.matrix(DTM[, cooeeterms_redux])
 dim(DTM_reduced)
 ```
 
-Create heatmap
+```{r}
+library(quanteda)
 
-```{r covtwit_01_28, echo=T, eval = T, message=FALSE, warning=FALSE}
-p2d <- as.matrix(DTM_reduced) %>%
-  scale() %>%
-  as.data.frame() %>%
-  dplyr::mutate(Date = rownames(.)) %>%
-  tidyr::gather(Keyword, Frequency, sigkeywords$Word[1]:sigkeywords$Word[length(sigkeywords$Word)]) %>%
-  dplyr::mutate(Date = str_replace_all(Date, "\\..*", ""),
-                Date = str_replace_all(Date, "X", ""),
-                NumDate = 1:length(Date))
-head(p2d)
+
 ```
 
-
-```{r covtwit_01_29, echo=T, eval = T, message=FALSE, warning=FALSE}
-every_nth = function(n) {
-  return(function(x) {x[c(TRUE, rep(FALSE, n - 1))]})
-}
-ggplot(p2d, aes(x = Date, y = Keyword, fill = Frequency)) +
-  geom_tile()+
-  scale_x_discrete(breaks = every_nth(n = 5)) +
-  scale_fill_gradient(name = "Frequency",
-                      low = "#FFFFFF",
-                      high = "#012345") +
-  labs(x = "Date", y = "Keyword") +
-  theme_set(theme_bw(base_size = 12)) +
-  theme(legend.position="none",
-        panel.grid.major = element_blank(), 
-        panel.grid.minor = element_blank(), 
-        axis.text.x = element_text(angle = 90, size =8))
-ggsave(file = here::here("images", "Covid_lggheat.png"), 
-         height = 10,  width = 8, dpi = 320)
-```
-
-```{r covtwit_01_30, eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
-library(gplots)
-m <- DTM_reduced %>%
-   scale()
-my_palette <- colorRampPalette(c("white", "white", "gray30"))(n = 1000)
-# display plot
-hm <- heatmap.2(m, col = my_palette, density.info="none", trace="none", 
-                dendrogram=c("row"), key=FALSE)
-hc <- as.hclust(hm$rowDendrogram)
-```
 
 # Outro
 
