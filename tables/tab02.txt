@@ -1,1 +1,3 @@
 Gender	Letters	Types	Tokens
+female	178	83343	213410
+male	429	169411	480521

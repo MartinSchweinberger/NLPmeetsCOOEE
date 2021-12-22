@@ -146,22 +146,7 @@ cooeed_clean <- cooeed %>%
 head(cooeed_clean)
 ```
 
-Stemming function (from https://cran.r-project.org/web/packages/corpus/vignettes/stemmer.html)
 
-```{r cooee_01_15}
-stem_hunspell <- function(term) {
-    # look up the term in the dictionary
-    stems <- hunspell::hunspell_stem(term)[[1]]
-
-    if (length(stems) == 0) { # if there are no stems, use the original term
-        stem <- term
-    } else { # if there are multiple stems, use the last one
-        stem <- stems[[length(stems)]]
-    }
-
-    stem
-}
-```
 
 
 
@@ -174,15 +159,9 @@ stopwords_regex = paste0('\\b', stopwords_regex, '\\b')
 cooeed_clean <- cooeed_clean %>%
   dplyr::filter(Register == "PrW") %>%
   dplyr::mutate(Text_clean = stringr::str_replace_all(tolower(Text), stopwords_regex, ""),
-                Text_clean = stringr::str_remove_all(Text_clean, "[^[:alpha:] ]")) %>%
-  dplyr::mutate(Text_stem = sapply(Text_clean, function(x) {
-    x <- corpus::text_tokens(x, stemmer = stem_hunspell) %>%
-      paste(sep = " ") %>%
-      unlist() %>%
-      stringr::str_remove_all("[^[:alpha:] ]") %>%
-      stringr::str_remove_all("^c")
-  })
-    )
+                Text_clean = stringr::str_remove_all(Text_clean, "[^[:alpha:] ]"))
+# save data
+base::saveRDS(cooeed_clean, file = here::here("data", "cooeed_clean.rda"))
 # inspect
 head(cooeed_clean)
 ```
@@ -194,14 +173,6 @@ Check data
 ```{r cooee_01_19}
 table(cooeed_clean$Datecat)
 ```
-
-## Save data (COOEE)
-
-```{r cooee_01_21}
-base::saveRDS(cooeed_clean, file = here::here("data", "cooeed_clean.rda"))
-```
-
-
 
 # Control corpus
 
@@ -244,25 +215,232 @@ control_clean <- control %>%
                                            as.numeric(YearWriting) < 1880 ~ "1861-1880", 
                                            as.numeric(YearWriting) <= 1900 ~ "1881-1900",
                                            TRUE ~ "unknown"),
-                Datecat = factor(Datecat)) %>%
-  dplyr::mutate(Text_stem = sapply(Text_clean, function(x) {
-    x <- corpus::text_tokens(x, stemmer = stem_hunspell) %>%
-      paste(sep = " ") %>%
-      unlist() %>%
-      stringr::str_remove_all("[^[:alpha:] ]") %>%
-      stringr::str_remove_all("^c")
-  })
-    )
+                Datecat = factor(Datecat))
+# save data
+base::saveRDS(control_clean, file = here::here("data", "control_clean.rda"))
 # inspect data
 head(control_clean)
 ```
 
-## Save data (control)
+# Corpus Exploration
 
-```{r  cooee_01_27}
-base::saveRDS(control_clean, file = here::here("data", "control_clean.rda"))
+## COOEE
+
+```{r train, message=F, warning=F}
+cooeetb <- cooeed_clean %>%
+  #dplyr::filter(Register == "PcW") %>%
+  dplyr::select(Birth, Gender, Origin, Age, Status, Arrival, Abode, YearWriting, 
+                PlaceWriting, TextT, Words, Text, Datecat) %>%
+  dplyr::mutate(Gender = dplyr::case_when(Gender == "m" ~ "male", 
+                                          Gender == "f" ~ "female",
+                                          TRUE ~ "unknown")) %>% 
+  dplyr::mutate(Text = stringr::str_squish(Text)) %>%
+  dplyr::rowwise() %>%
+  dplyr::mutate(Tokens = length(unlist(tokenize_fasterword(Text))),
+                Types = length(table(unlist(tokenize_fasterword(Text)))))
+# inspect
+head(cooeetb)
 ```
 
+tab: date, gender, types, tokens
+
+
+
+```{r}
+tab01 <- cooeetb %>%
+  dplyr::group_by(Datecat, Gender) %>%
+  dplyr::summarise(Letters = n(),
+                   Types = sum(Types),
+                   Tokens = sum(Tokens),
+                   MeanLength = round(Tokens/Letters, 1))
+readr::write_delim(tab01, here::here("tables", "tab01.txt"), delim = "\t")
+# inspect
+tab01
+```
+
+
+
+```{r}
+tab02 <- cooeetb %>%
+  dplyr::group_by(Gender) %>%
+  dplyr::summarise(Letters = n(),
+                   Types = sum(Types),
+                   Tokens = sum(Tokens))
+readr::write_delim(tab02, here::here("tables", "tab02.txt"), delim = "\t")
+# inspect
+tab02
+```
+
+check percentage of letters written by women
+
+
+```{r}
+# percent women
+27/(378+27)*100
+# average length
+797569/405
+
+
+```
+
+## CLMP
+
+inspect control data
+
+```{r}
+head(control_clean)
+```
+
+generate overview table for control corpus by year
+
+```{r train, message=F, warning=F}
+controltb <- control_clean %>%
+  dplyr::select(YearWriting, Text, Datecat) %>%
+  dplyr::mutate(Text = stringr::str_squish(Text)) %>%
+  dplyr::rowwise() %>%
+  dplyr::mutate(Tokens = length(unlist(tokenize_fasterword(Text))),
+                Types = length(table(unlist(tokenize_fasterword(Text)))))
+# inspect
+head(controltb)
+```
+
+generate overview table for control corpus by period
+
+```{r}
+tab03 <- controltb %>%
+  dplyr::group_by(Datecat) %>%
+  dplyr::summarise(Letters = n(),
+                   Types = sum(Types),
+                   Tokens = sum(Tokens),
+                   MeanLength = round(Tokens/Letters, 1))
+readr::write_delim(tab03, here::here("tables", "tab03.txt"), delim = "\t")
+# inspect
+tab03
+```
+
+# Map
+
+check number of letters by region
+
+```{r}
+table(cooee_clean$PlaceWriting)
+```
+
+load packages and and data
+
+```{r}
+# load packages
+library(tmap) 
+library(here)
+library(rgdal)
+# load shape files
+ozmap <- readOGR(dsn = here::here("data/shapes", "AshmoreAndCartierIslands.shp"), stringsAsFactors = F)
+```
+
+process data
+
+```{r}
+# convert the data into tidy format
+ozmapt <- broom::tidy(ozmap, region = "name")
+# inspect data
+head(ozmapt)
+```
+
+clean map data
+
+```{r}
+# extract names of states and their long and lat
+cnames <- ozmapt %>%
+  dplyr::group_by(id) %>%
+  dplyr::summarise(long = mean(long),
+                   lat = mean(lat)) %>%
+  dplyr::filter(id != "Ashmore and Cartier Islands",
+                id != "Christmas Island",
+                id != "Cocos (Keeling) Islands",
+                id != "Coral Sea Islands Territory",
+                id != "Heard Island and McDonald Islands",
+                id != "Jervis Bay Territory",
+                id != "Norfolk Island",
+                id != "Australian Capital Territory") %>%
+  dplyr::mutate(long = ifelse(id == "Queensland", long-5, long ),      # to left
+                long = ifelse(id == "New South Wales", long-2, long ),
+                long = ifelse(id == "Northern Territory", long-1, long ),
+                lat = ifelse(id == "New South Wales", lat+2, lat ),    # up
+                lat = ifelse(id == "Northern Territory", lat-5, lat ),
+                lat = ifelse(id == "Victoria", lat+1, lat ),
+                lat = ifelse(id == "South Australia", lat+5, lat ),
+                lat = ifelse(id == "Western Australia", lat-3, lat )) %>%
+  dplyr::mutate(id = ifelse(id == "New South Wales", "New South Wales\n(196 letters)", id ),
+                id = ifelse(id == "Queensland", "Queensland\n(16 letters)", id ),
+                id = ifelse(id == "South Australia", "South Australia\n(31 letters)", id ),
+                id = ifelse(id == "Tasmania", "Tasmania\n(28 letters)", id ),
+                id = ifelse(id == "Victoria", "Victoria\n(240 letters)", id ),
+                id = ifelse(id == "Western Australia", "Western Australia\n(87 letters)", id ))
+# inspect
+cnames
+```
+
+define colors for states and text
+
+```{r}
+# define colors
+#library(scales)
+#clrs <- viridis_pal()(15)
+# inspect
+clrs <- c("gray99",
+          "gray99",
+          "gray99",
+          "gray99",
+          "gray99",
+          "gray99",
+          "gray99",
+          "gray40", # NSW
+          "gray99",
+          "gray95", # NT
+          "gray90", # QLD
+          "gray80", # SA
+          "gray85", # TAS
+          "gray25", # VIC
+          "gray70") # wa
+tclrs <- c("white", # NSW
+          "gray20", # NT
+          "gray20", # QLD
+          "gray20", # SA
+          "gray20", # TAS
+          "white", # VIC
+          "gray20") # wa
+```
+
+
+generate map
+
+```{r}
+# plot ozmap
+p <- ggplot() +
+  # plot map
+  geom_polygon(data = ozmapt, 
+               aes(x = long, y = lat, group = group, fill = id), 
+               asp = 1, colour = NA) +
+  # add text
+  geom_text(data = cnames, aes(x = long, y = lat, label = id), 
+            size = 2.5, color = tclrs, fontface = "bold", 
+            check_overlap = T) +
+  # color states
+  scale_fill_manual(values = clrs) +
+  # define theme and axes
+  theme_void() +
+  scale_x_continuous(name = "Longitude", limits = c(113, 155)) +
+  scale_y_continuous(name = "Latitude", limits = c(-45, -10)) +
+  # def. background color
+  theme(panel.background = element_rect(fill = "white",
+                                        colour = "white",
+                                        size = 0.5, linetype = "solid"),
+        legend.position = "none")
+ggsave(file = here::here("images", "letter_map.png"), 
+         height = 4,  width = 5, dpi = 320)
+# show plot
+p
+```
 
 
 # Outro
