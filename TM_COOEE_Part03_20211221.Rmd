@@ -303,11 +303,11 @@ convert data: have date, ngram, and frequencies of ngrams
 ```{r}
 # tokenize and create ngram freqs
 cooee_toks <- tokens(cooeed_clean$Text_clean) 
-cooee_tokngrms <- tokens_ngrams(cooee_toks, n = 1:3)
+cooee_tokngrms <- tokens_ngrams(cooee_toks, n = 1)
 cooee_ngrmfreq <- cooeed_clean %>%
   dplyr::select(id, Datecat, Text_clean) %>%
   dplyr::group_by(Datecat) %>%
-  tidytext::unnest_ngrams(cooee_tokngrms, Text_clean, n = 3, n_min = 1, ngram_delim = "_") %>% 
+  tidytext::unnest_ngrams(cooee_tokngrms, Text_clean, n = 1, n_min = 1, ngram_delim = "_") %>% 
   dplyr::count(cooee_tokngrms) %>%
   dplyr::rename("Period" = colnames(.)[1],
                 "Word" = colnames(.)[2],
@@ -369,7 +369,8 @@ Combine keywords
 
 ```{r covtwit_04_07, echo=T, eval = T, message=FALSE, warning=FALSE}
 period_keys <- rbind(keys_period1, keys_period2, keys_period3, 
-                     keys_period4, keys_period5, keys_period6)
+                     keys_period4, keys_period5, keys_period6) %>%
+  dplyr::arrange(-phi)
 # inspect data
 head(period_keys)
 ```
@@ -378,7 +379,18 @@ head(period_keys)
 
 ```{r  cooee_01_27}
 base::saveRDS(period_keys, file = here::here("data", "period_keys.rda"))
+base::saveRDS(sigkeywords, file = here::here("data", "sigkeywords.rda"))
 ```
+
+```{r}
+# load data
+cooee_clean  <- base::readRDS(file = here::here("data", "cooeed_clean.rda"))
+period_keys  <- base::readRDS(file = here::here("data", "period_keys.rda"))
+sigkeywords  <- base::readRDS(file = here::here("data", "sigkeywords.rda"))
+# inspect
+nrow(cooee_clean); nrow(period_keys)
+```
+
 
 # Visualize keywords
 
@@ -408,7 +420,7 @@ p1 <- ggplot(p1d, aes(x = Period, y = x2)) +
   #geom_text(aes(label=Word),hjust=0, vjust=-1,
   #          position=position_jitter(width=.5,height=1), size = 2) +
   geom_text(aes(label = Word), check_overlap = TRUE, vjust = 1.5) +
-  labs(x = "Phase", y = "Association strength (logged X2)") +
+  labs(x = "Period", y = "Association strength (logged X2)") +
   scale_x_continuous(breaks = seq(1, 6, 1), 
                      labels= seq(1, 6, 1), 
                      limits = c(0.5, 6.5)) +
@@ -424,22 +436,14 @@ ggsave(file = here::here("images", "Keyterms_Period.png"),
 p1
 ```
 
+
 # Network
-
-```{r}
-head(cooee_clean)
-```
-
-```{r}
-table(cooee_clean$PlaceWriting)
-```
-
 
 Create corpus and DTM
 
 ```{r covtwit_02_03, echo=T, eval = T, message=FALSE, warning=FALSE}
 # create corpus
-cooeed_min <- cooeed_clean %>%
+cooeed_min <- cooee_clean %>%
   dplyr::mutate(doc_id = id,
                 text = Text_clean)
 corpus <- tm::Corpus(DataframeSource(cooeed_min))
@@ -500,8 +504,8 @@ ggplot(p2d, aes(x = Date, y = Keyword, fill = Frequency)) +
   theme(legend.position="none",
         panel.grid.major = element_blank(), 
         panel.grid.minor = element_blank(), 
-        axis.text.x = element_text(angle = 90, size =8)) +
-  ggsave(file = here::here("images", "Covid_lggheat.png"), 
+        axis.text.x = element_text(angle = 90, size =8))
+ggsave(file = here::here("images", "Covid_lggheat.png"), 
          height = 10,  width = 8, dpi = 320)
 ```
 
