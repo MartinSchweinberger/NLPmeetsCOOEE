@@ -39,6 +39,9 @@ install.packages("tokenizers")
 install.packages("qdap")
 install.packages("textstem")
 install.packages("corpus")
+install.packages("quanteda.textmodels")
+install.packages("seededlda")
+install.packages("lubridate")
 ```
 
 Now, we activate the packages, set options, load relevant functions, and defining the path to the data.
@@ -56,6 +59,10 @@ library(tokenizers)
 library(qdap)
 library(textstem)
 library(corpus)
+library(quanteda)
+library(quanteda.textmodels)
+library(seededlda)
+library(lubridate)
 # for pos-tagging objects in R
 source("D:\\R/POStagObject.R") 
 ```
@@ -65,9 +72,38 @@ In a next step, we load and process the data.
 
 ```{r}
 # cooee
-cooee_clean  <- base::readRDS(file = here::here("data", "cooee_clean.rda"))
-# control
-control_clean  <- base::readRDS(file = here::here("data", "control_clean.rda"))
+cooee_clean  <- base::readRDS(file = here::here("data", "cooeed_clean.rda"))
+# inspect
+str(cooee_clean)
+```
+
+```{r}
+# define stopword search pattern
+stopwords_regex = paste(stopwords('en'), collapse = '\\b|\\b')
+custregex <- c("\\b|\\bone\\b|\\btwo\\b|\\bus\\b|\\bnow\\b|\\bmust\\b|\\bmany\\b|\\bmuch\\b|\\bmevery\\b")
+stopwords_regex = paste0('\\b', stopwords_regex, custregex)
+# clean corpus
+cooee_clean <- cooee_clean %>%
+  dplyr::mutate(Text_semiclean = stringr::str_remove_all(Text, stopwords_regex),
+                Text_semiclean = stringr::str_squish(Text_semiclean))
+# inspect
+head(cooee_clean)
+```
+
+
+prepare data
+
+```{r}
+cooee_sent <- tokenize_sentence(cooee_clean$Text_semiclean) %>%
+  unlist()
+# check
+length(cooee_sent)
+```
+
+
+```{r}
+# convert to corpus
+cooee_corpus <- corpus(cooee_sent)
 ```
 
 
@@ -76,311 +112,101 @@ control_clean  <- base::readRDS(file = here::here("data", "control_clean.rda"))
 
 Create corpus and DTM
 
-```{r covtwit_02_03, echo=T, eval = T, message=FALSE, warning=FALSE}
-# create corpus
-cooeed_min <- cooeed_clean %>%
-  dplyr::mutate(doc_id = id,
-                text = Text_stem)
-corpus <- tm::Corpus(DataframeSource(cooeed_min))
-# compute document term matrix with terms >= minimumFrequency
-minimumFrequency <- 1
-DTM <- DocumentTermMatrix(corpus, 
-                          control = list(bounds = list(global = c(minimumFrequency, Inf))))
-# have a look at the number of documents and terms in the matrix
-dim(DTM)
-```
-
-Due to vocabulary pruning, DTM may have empty rows (problematic!): remove empty docs from DTM and metadata
-
-```{r covtwit_02_04, echo=T, eval = T, message=FALSE, warning=FALSE}
-sel_idx <- slam::row_sums(DTM) > 0
-DTM <- DTM[sel_idx, ]
-cooeed_min <- cooeed_min[sel_idx, ]
-```
-
-# Determine optimal number of topics
-
-The determinination of the optimal number of topics follows @murzintcev2020idealtopics.
-
-```{r covtwit_02_05, echo=T, eval = T, message=FALSE, warning=FALSE}
-# load packages
-library(topicmodels)
-library(ldatuning)
-# create sample data set
-ldatuneset <- cooeed_min
-ldatuneCorpus <- corpus <- Corpus(DataframeSource(ldatuneset))
-ldatuneDTM <- DocumentTermMatrix(ldatuneCorpus,
-                                 control = list(bounds = list(global = c(minimumFrequency, Inf))))
-sel_idx <- slam::row_sums(ldatuneDTM) > 0
-ldatuneDTM <- ldatuneDTM[sel_idx, ]
-# create models with different number of topics
-result <- FindTopicsNumber(
-  ldatuneDTM,
-  topics = seq(from = 2, to = 10, by = 1),
-  metrics = c("CaoJuan2009",  "Deveaud2014", "Griffiths2004"),
-  method = "Gibbs",
-  control = list(seed = 77),
-  verbose = TRUE
-)
-```
-
-Plot results (best number of topics: lowest CaoJuan2009, highest Griffith2004)
-
-```{r covtwit_02_06, echo=T, eval = T, message=FALSE, warning=FALSE}
-FindTopicsNumber_plot(result)
-```
-
-Results are volatile but there is a dip in minimizers  at 6. Thus, we select K = 6.
-
-```{r covtwit_02_07, echo=T, eval = T, message=FALSE, warning=FALSE}
-# number of topics
-K <- 6
-# set random number generator seed
-set.seed(9161)
-# compute the LDA model, inference via 1000 iterations of Gibbs sampling
-topicModel <- LDA(DTM, K, method="Gibbs", control=list(iter = 500, verbose = 25, alpha = 0.2))
-```
-
-Extract LDA results
-
-```{r covtwit_02_08, echo=T, eval = T, message=FALSE, warning=FALSE}
-# have a look a some of the results (posterior distributions)
-LDA_Result <- posterior(topicModel)
-# topics are probability distributions over the entire vocabulary
-beta <- LDA_Result$terms   # get beta from results
-# for every document we have a probability distribution of its contained topics
-theta <- as.data.frame(LDA_Result$topics)
-# extract dominant topic for each tweet
-cooeed_min$DominantTopic <- colnames(theta)[apply(theta,1,which.max)]
-head(cooeed_min)
-```
-
-Write function for extracting distinctive terms per topic
-
-```{r covtwit_02_09, echo=T, eval = T, message=FALSE, warning=FALSE}
-ExtractAllTopicKeywords <- function(cooeed_min, Topic){
-  source(here::here("scripts", "CoocStatzFisher.R"))
-  TopicTerms <- cooeed_min %>%
-  unnest_tokens(Word, text) %>%
-  dplyr::mutate(DominantTopic = ifelse(DominantTopic == Topic, "Target", "NonTarget")) %>%
-  group_by(DominantTopic) %>% 
-  count(Word, sort = TRUE) %>% 
-  spread(DominantTopic, n) %>% 
-  replace(is.na(.), 0) %>%
-  mutate(Total = Target+NonTarget) %>%
-#  dplyr::filter(Total > 10) %>%
-  dplyr::mutate(TotalTarget = sum(Target),
-                TotalNonTarget = sum(NonTarget),
-                NRows = length(Word)) %>%
-  dplyr::select(-Total)
-  # extract keywords
-  keywords <- CoocStatzFisher(TopicTerms)
-  sigkeywords <- keywords %>%
-    dplyr::filter(CorrSignificance != "n.s.",
-                  Type == "Overuse") %>%
-    dplyr::arrange(-phi)
-  return(sigkeywords)
-}
-```
-
-Extract keyterms for topics
-
-```{r covtwit_02_10, echo=T, eval = T, message=FALSE, warning=FALSE}
-# apply function
-AllSigKeywordsTopic01 <- ExtractAllTopicKeywords(cooeed_min, 1)
-AllSigKeywordsTopic02 <- ExtractAllTopicKeywords(cooeed_min, 2)
-AllSigKeywordsTopic03 <- ExtractAllTopicKeywords(cooeed_min, 3)
-# determine number of key terms
-NTerms <- 10
-# combine tables
-AllSigKeywordsTopic <- rbind(AllSigKeywordsTopic01[1:NTerms,], 
-                             AllSigKeywordsTopic02[1:NTerms,], 
-                             AllSigKeywordsTopic03[1:NTerms,],)
-# add Topic column
-AllSigKeywordsTopic$Topic <- c(rep("Topic1", NTerms),
-                               rep("Topic2", NTerms),
-                               rep("Topic3", NTerms)) 
-# clean table
-AllSigKeywordsTopic <- AllSigKeywordsTopic %>%
-  dplyr::select(-NonTarget, -TotalTarget, -TotalNonTarget, -RateTarget, -RateNonTarget, 
-                -Type, -x2, -p, -Target)
-# inspect data
-head(AllSigKeywordsTopic)
-```
-
-```{r covtwit_02_11, echo=T, eval = T, message=FALSE, warning=FALSE}
-KeywordsTopic <- AllSigKeywordsTopic %>%
-  dplyr::mutate(Word = paste0(Word, " (", phi, "***)")) %>%
-  dplyr::select(-CorrSignificance, -phi)
-# inspect table
-head(KeywordsTopic)
-```
-
-Write function for extracting the top six distinctive terms per topic
-
-```{r covtwit_02_12, echo=T, eval = T, message=FALSE, warning=FALSE}
-ExtractTopicKeywords <- function(cooeed_clean, Topic = 1){
-  source(here::here("scripts", "CoocStatzFisher.R"))
-  TopicTerms <- cooeed_clean %>%
-  unnest_tokens(Word, text, token = "tweets") %>%
-  dplyr::mutate(DominantTopic = ifelse(DominantTopic == Topic, "Target", "NonTarget")) %>%
-  group_by(DominantTopic) %>% 
-  count(Word, sort = TRUE) %>% 
-  spread(DominantTopic, n) %>% 
-  replace(is.na(.), 0) %>%
-  mutate(Total = Target+NonTarget) %>%
-  dplyr::filter(Total > 10) %>%
-  dplyr::mutate(TotalTarget = sum(Target),
-                TotalNonTarget = sum(NonTarget),
-                NRows = length(Word)) %>%
-  dplyr::select(-Total)
-  # extract keywords
-  keywords <- CoocStatzFisher(TopicTerms)
-  sigkeywords <- keywords %>%
-    dplyr::filter(CorrSignificance != "n.s.",
-                  Type == "Overuse") %>%
-    dplyr::arrange(-phi)
-  return(paste(sigkeywords$Word[1:6], collapse = "|"))
-}
-```
-
-Extract keyterms for topics
-
-```{r covtwit_02_13, echo=T, eval = T, message=FALSE, warning=FALSE}
-# apply function
-SigKeywordsTopic01 <- ExtractTopicKeywords(cooeed_clean, 1)
-SigKeywordsTopic02 <- ExtractTopicKeywords(cooeed_clean, 2)
-SigKeywordsTopic03 <- ExtractTopicKeywords(cooeed_clean, 3)
-SigKeywordsTopic04 <- ExtractTopicKeywords(cooeed_clean, 4)
-SigKeywordsTopic05 <- ExtractTopicKeywords(cooeed_clean, 5)
-# inspect data
-head(SigKeywordsTopic01)
-```
-
-Create topic names based on the most distinctive terms for each topic
-
-```{r covtwit_02_14, echo=T, eval = T, message=FALSE, warning=FALSE}
-topictermsls <- c(SigKeywordsTopic01, SigKeywordsTopic02, SigKeywordsTopic03,
-                  SigKeywordsTopic04, SigKeywordsTopic05)
-#topicNames <- paste("Topic", str_pad(1:5, 2, pad = "0"), topictermsls, sep = "_")
-topicNames <- paste("Topic", 1:5, topictermsls, sep = "_")
-topicNames <- str_replace_all(topicNames, "c_", "c")
-topicNames
-```
-
-Manually created topic names
-
-```{r covtwit_02_15, echo=T, eval = T, message=FALSE, warning=FALSE}
-topicNames_manual <- c("Topic1_TRAVEL|LIVING", "Topic2_LOVELETTER", "Topic3_MILITARY",
-                       "Topic4_FAMILY", "Topic5_INDIANS")
+```{r}
+toks_cooee <- tokens(cooee_corpus, 
+                    remove_punct = TRUE, 
+                    remove_numbers = TRUE, 
+                    remove_symbol = TRUE)
+toks_cooee <- tokens_remove(toks_cooee, 
+                            pattern = c(stopwords("en"), "*-time", "updated-*", "gmt", "bst"))
+dfmat_cooee <- dfm(toks_cooee) %>% 
+              dfm_trim(min_termfreq = 0.8, 
+                       termfreq_type = "quantile",
+                       max_docfreq = 0.1, 
+                       docfreq_type = "prop")
 ```
 
 
 
-Add topics names to data
-
-```{r covtwit_02_16, echo=T, eval = T, message=FALSE, warning=FALSE}
-cooeed_clean <- cooeed_clean %>%
-  dplyr::mutate(Topic = ifelse(DominantTopic == "1", topicNames_manual[1],
-                        ifelse(DominantTopic == "2", topicNames_manual[2],
-                        ifelse(DominantTopic == "3", topicNames_manual[3],
-                        ifelse(DominantTopic == "4", topicNames_manual[4],
-                               topicNames_manual[5]))))) %>%
-  dplyr::rename(Period = Datecat)
-# inspect data
-head(cooeed_clean)
+```{r}
+tmod_lda <- textmodel_lda(dfmat_cooee, k = 8)
+readr::write_delim(as.data.frame(terms(tmod_lda, 10)), here::here("tables", "topic_keys.txt"), delim = "\t")
+# inspect
+terms(tmod_lda, 10)
 ```
 
-Create Probability of Topics per Phase table
 
-```{r covtwit_02_17, echo=T, eval = T, message=FALSE, warning=FALSE}
-topicspd <- cooeed_clean %>%
-  dplyr::select(Period, Topic, Words) %>%
+```{r}
+length(topics(tmod_lda))
+```
+```{r}
+head(topics(tmod_lda), 20)
+```
+
+# Topic by period
+
+create index of how many sentences are in each letter
+
+```{r}
+cooee_idx <- sapply(cooee_clean$Text_semiclean, function(x){
+  x <- tokenize_sentence(x)
+  x <- sapply(x, function(y){ length(y) })
+})
+cooee_idx <- as.vector(cooee_idx)
+# inspect
+head(cooee_idx)
+```
+
+generate data frame with topic for each sentence plus period
+
+```{r}
+Letters <- rep(cooee_clean$Nr, cooee_idx)
+Date <- rep(cooee_clean$YearWriting, cooee_idx)
+Period <- rep(cooee_clean$Datecat, cooee_idx)
+Topics <- topics(tmod_lda)
+Id <- 1:length(topics)
+# generate df
+cooee_df <- data.frame(Id, Letters, Date, Period, Topics) %>%
+  dplyr::group_by(Period, Topics) %>%
+  dplyr::summarise(Freq = n()) %>%
+  dplyr::ungroup() %>%
+  dplyr::mutate(Topics = dplyr::case_when(Topics == "topic1" ~ "Topic1_family",
+                                          Topics == "topic2" ~ "Topic2_exploration",
+                                          Topics == "topic3" ~ "Topic3_innerself",
+                                          Topics == "topic4" ~ "Topic4_landscape",
+                                          Topics == "topic5" ~ "Topic5_indiginous",
+                                          Topics == "topic6" ~ "Topic6_employment",
+                                          Topics == "topic7" ~ "Topic7_journey",
+                                          Topics == "topic8" ~ "Topic8_arrival")) %>%
+  tidyr::drop_na() %>%
   dplyr::group_by(Period) %>%
-  dplyr::mutate(SumWords = sum(Words)) %>%
-  dplyr::group_by(Period, Topic) %>%
-  dplyr::summarise(SumWords = unique(SumWords),
-                   FrequencyTopic = n(),
-                   Probability = FrequencyTopic/SumWords*100) %>%
-  dplyr::ungroup()
-# inspect data
-head(topicspd)
-
+  dplyr::mutate(Sum = sum(Freq),
+                Percent = round(Freq/Sum*100, 1))
+# save data
+readr::write_delim(cooee_df, here::here("tables", "cooee_df.txt"), delim = "\t")
+# inspect
+head(cooee_df)
 ```
 
-Visualize results
+plot
 
-```{r covtwit_02_18, echo=T, eval = T, message=FALSE, warning=FALSE}
-require(pals)
-ggplot(topicspd, aes(x=Period, y=Probability, fill=Topic)) +
-  guides(fill=guide_legend(nrow = 3)) +
-  geom_bar(stat = "identity") + 
-  labs(y = "Percent (of words)", x = "Phase") + 
-#  scale_x_continuous(breaks = seq(1, 7, 1), labels= seq(1, 7, 1)) +
-  scale_fill_manual(labels = names(table(topicspd$Topic)),
-                      breaks = names(table(topicspd$Topic)),
-                      values = paste0("gray", seq(20, 80, 15)), 
-                      name = "") +
-  theme_set(theme_bw(base_size = 12)) +
+```{r}
+cooee_df %>%
+  ggplot(aes(x = Period, y = Percent, group = Topics, fill = Topics)) +
+  geom_bar(stat = "identity", position="stack") +
+  scale_fill_grey() +
+  #scale_fill_brewer(palette="Dark2") +
   theme(legend.position="top",
-        axis.text.x = element_text(angle = 0, hjust = 1, size = 10)) 
-```
-
-```{r covtwit_02_19, echo=T, eval = T, message=FALSE, warning=FALSE}
-topicspd2 <- topicspd %>%
-  dplyr::mutate(Topic = factor(Topic)) %>%
-  dplyr::group_by(Period, Topic) %>%
-  dplyr::summarise(Percent = mean(Probability))
-
-ggplot(topicspd2, aes(x=Period, y=Percent, fill = Topic, linetype = Topic)) + 
-  geom_bar(stat="identity", position="fill") +
-#  geom_smooth(span = .75, se = F) + 
-#  geom_line() +
-  guides(color=guide_legend(nrow = 3)) +
-  theme_set(theme_bw(base_size = 12)) +
-  scale_fill_manual(labels = names(table(topicspd2$Topic)),
-                      breaks = names(table(topicspd2$Topic)),
-                      values = paste0("gray", seq(20, 80, 15)), 
-                      name = "") +
-  scale_linetype_manual(labels = names(table(topicspd2$Topic)),
-                        breaks = names(table(topicspd2$Topic)),
-                        values = seq(1, 5, 1), 
-                        name = "") +
-  labs(y = "Percent (of COVID-19 tweets)", x = "Phase") + 
-#  scale_x_continuous(breaks = seq(1, 7, 1), 
-#                     labels= seq(1, 7, 1), 
-#                     limits = c(1, 7)) +
-#  scale_y_continuous(limits = c(0, .5)) +
-  theme(legend.position="top", 
         panel.grid.major = element_blank(), 
         panel.grid.minor = element_blank(), 
-        axis.text.x = element_text(angle = 0, hjust = 1, size = 10))
+        axis.text.x = element_text(angle = 0, size =10)) +
+  scale_y_continuous(name = "Proportion (%)", 
+                   breaks = seq(0, 100, 25), 
+                   labels = seq(0, 100, 25), 
+                   limits = c(0, 105))
+ggsave(file = here::here("images", "topic_cooee_gray.png"), 
+         height = 4,  width = 7.5, dpi = 320)
 ```
-
-```{r covtwit_02_20, echo=T, eval = T, message=FALSE, warning=FALSE}
-ggplot(topicspd2, aes(x=Period, y=Percent, group = Topic, color = Topic, linetype = Topic)) + 
-  geom_line(size = 1.25) + 
-  guides(color=guide_legend(nrow = 5)) +
-  scale_colour_manual(labels = names(table(topicspd2$Topic)),
-                      breaks = names(table(topicspd2$Topic)),
-                      values = paste0("gray", seq(20, 80, 15)), 
-                      name = "") +
-  scale_linetype_manual(labels = names(table(topicspd2$Topic)),
-                        breaks = names(table(topicspd2$Topic)),
-                        values = seq(1, 5, 1), 
-                        name = "") +
-  labs(y = "Percent (of COVID-19 tweets)", x = "Phase") + 
-#  scale_x_continuous(breaks = seq(1, 7, 1), 
-#                     labels= seq(1, 7, 1), 
-#                     limits = c(1, 7)) +
-  scale_y_continuous(limits = c(0, .3)) +
-  theme(legend.position="top", 
-        panel.grid.major = element_blank(), 
-        panel.grid.minor = element_blank(), 
-        axis.text.x = element_text(angle = 0, hjust = 1)) 
-
-```
-
 
 
 # Outro

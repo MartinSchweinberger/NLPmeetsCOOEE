@@ -137,22 +137,14 @@ cnet <- quanteda.textplots::textplot_network(cooee_fcm,
                                      min_freq = .5, 
                                      edge_alpha = 0.15, 
                                      edge_color = "gray50",
-                                     vertex_labelsize = log(rowSums(cooee_fcm))/2,
-                                     #edge_size = .5,
+                                     vertex_labelsize = log(rowSums(cooee_fcm))/3,
+                                     vertex_size = .5,
                                      max.overlaps = max.overlaps*2 )
 ggsave(file = here::here("images", "net_cooee.png"), 
          height = 4,  width = 6, dpi = 320)
 # inspect
 cnet
 ```
-
-
-## Period 1
-
-```{r}
-
-```
-
 
 
 

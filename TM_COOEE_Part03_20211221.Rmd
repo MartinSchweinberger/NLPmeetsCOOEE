@@ -161,6 +161,7 @@ Perform statistics
 source(here::here("scripts", "CoocStatzFisher.R"))
 # extract keywords
 keywords <- CoocStatzFisher(keywordtb)
+# filter sig. overused words 
 sigkeywords <- keywords %>%
   dplyr::filter(CorrSignificance != "n.s.",
                 Type == "Overuse") %>%
@@ -170,8 +171,10 @@ sigkeywords$Word[1:100]
 ```
 
 ```{r covtwit_01_12b, echo=T, eval = T, message=FALSE, warning=FALSE}
+# filter keywords with phi > .2
 bigsigkeywords <- sigkeywords %>%
-  dplyr::filter(phi > .01)
+  dplyr::filter(phi > .02)
+readr::write_delim(bigsigkeywords, here::here("tables", "bigsigkeywords.txt"), delim = "\t")
 # inspect
 bigsigkeywords
 ```
@@ -444,48 +447,6 @@ p1
 ```
 
 
-# Network
-
-Create corpus and DTM
-
-```{r covtwit_02_03, echo=T, eval = T, message=FALSE, warning=FALSE}
-# create corpus
-cooeed_min <- cooee_clean %>%
-  dplyr::mutate(doc_id = id,
-                text = Text_clean)
-corpus <- tm::Corpus(DataframeSource(cooeed_min))
-# compute document term matrix with terms >= minimumFrequency
-minimumFrequency <- 1
-DTM <- DocumentTermMatrix(corpus, 
-                          control = list(bounds = list(global = c(minimumFrequency, Inf))))
-# have a look at the number of documents and terms in the matrix
-dim(DTM)
-```
-
-Due to vocabulary pruning, DTM may have empty rows (problematic!): remove empty docs from DTM and metadata
-
-```{r covtwit_02_04, echo=T, eval = T, message=FALSE, warning=FALSE}
-sel_idx <- slam::row_sums(DTM) > 0
-DTM <- DTM[sel_idx, ]
-cooeed_min <- cooeed_min[sel_idx, ]
-```
-
-Reduce DTM (keywords only)
-
-```{r covtwit_01_27, echo=T, eval = T, message=FALSE, warning=FALSE}
-# clean Terms
-dimnames(DTM)$Terms <- str_remove_all(dimnames(DTM)$Terms, fixed("\"")) 
-dimnames(DTM)$Terms <- str_remove_all(dimnames(DTM)$Terms, fixed(","))
-cooeeterms_redux <- sigkeywords$Word[which(sigkeywords$Word %in% dimnames(DTM)$Terms)]
-DTM_reduced <- as.matrix(DTM[, cooeeterms_redux])
-dim(DTM_reduced)
-```
-
-```{r}
-library(quanteda)
-
-
-```
 
 
 # Outro
