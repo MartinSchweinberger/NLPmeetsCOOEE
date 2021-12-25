@@ -276,9 +276,9 @@ check percentage of letters written by women
 
 ```{r}
 # percent women
-27/(378+27)*100
+178/(429+178)*100
 # average length
-797569/405
+sum(tab01$Tokens)/sum(tab01$Letters)
 
 
 ```

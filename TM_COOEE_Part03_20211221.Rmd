@@ -167,8 +167,10 @@ sigkeywords <- keywords %>%
                 Type == "Overuse") %>%
   dplyr::arrange(-phi)
 # inspect data
-sigkeywords$Word[1:100]
+sigkeywords$Word[1:100]; nrow(sigkeywords)
 ```
+
+Select keywords with substantive effect size (phi > .02)
 
 ```{r covtwit_01_12b, echo=T, eval = T, message=FALSE, warning=FALSE}
 # filter keywords with phi > .2
