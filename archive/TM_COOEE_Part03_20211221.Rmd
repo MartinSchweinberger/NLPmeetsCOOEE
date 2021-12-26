@@ -79,6 +79,24 @@ control_clean  <- base::readRDS(file = here::here("data", "control_clean.rda"))
 nrow(cooee_clean); nrow(control_clean)
 ```
 
+remove stopwords
+
+```{r}
+# define stopword search pattern
+stopwords_regex = paste(stopwords('en'), collapse = '\\b|\\b')
+custregex <- c("\\b|\\bone\\b|\\btwo\\b|\\bus\\b|\\bnow\\b|\\bmust\\b|\\bmany\\b|\\bmuch\\b|\\bmevery\\b")
+stopwords_regex = paste0('\\b', stopwords_regex, custregex)
+# clean corpus
+cooee_clean <- cooee_clean %>%
+  dplyr::mutate(Text_clean = stringr::str_remove_all(Text_clean, stopwords_regex),
+                Text_clean = stringr::str_squish(Text_clean))
+# inspect
+head(cooee_clean)
+```
+
+
+
+
 # Extract Keywords
 
 Create training set
@@ -239,7 +257,7 @@ Plot relative frequencies of Oz terms
 ```{r covtwit_01_38, echo=T, eval = T, message=FALSE, warning=FALSE}
 keywordselection <- c("convicts", "family", "natives", 
                       "australia", "colony", "ship",
-                      "river", "travelled", "journey")
+                      "creek", "travelled", "journey")
 # extract frequencies
 kwfreqs <- cooee_clean %>%
   dplyr::select(YearWriting, Text_clean, Words, Datecat) %>%
