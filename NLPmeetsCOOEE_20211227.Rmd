@@ -1,5 +1,5 @@
 ---
-title: "Analysis of the Corpus of Oz Early English - Part 1: Data Preparation"
+title: "Analysis of the Corpus of Oz Early English"
 author: "Anonymous"
 date: "`r format(Sys.time(), '%Y-%m-%d')`"
 output:
@@ -10,7 +10,7 @@ link-citations: yes
 
 # Introduction
 
-This document shows an analysis of Corpus of Oz Early English  (COOEE) [@fritz2004cooee]. 
+This document shows an analysis of *Corpus of Oz Early English*  (COOEE) [@fritz2004cooee]. 
 
 ## Aims
 
@@ -20,7 +20,9 @@ This document shows an analysis of Corpus of Oz Early English  (COOEE) [@fritz20
 
 * Create network of keywords (network analysis) 
 
-* Find topics (topic modeling) 
+* Find topics (topic modeling)
+
+* Display topics across periods
 
 # Data Processing
 
