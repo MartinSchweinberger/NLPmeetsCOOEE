@@ -1,0 +1,453 @@
+---
+title: "Analysis of the Corpus of Oz Early English - Part 1: Data Preparation"
+author: "Anonymous"
+date: "`r format(Sys.time(), '%Y-%m-%d')`"
+output:
+  bookdown::html_document2: default
+bibliography: Bibliography.bib
+link-citations: yes
+---
+
+# Introduction
+
+This document shows an analysis of Corpus of Oz Early English  (COOEE) [@fritz2004cooee]. 
+
+## Aims
+
+* Find keywords  (part 2)
+
+* Check for distribution of keywords by date (mosaic plot)  (part 2)
+
+* Create network of keywords (network analysis)  (part 2)
+
+* Find topics (topic modeling) (part 3)
+
+* Error analysis (misspelled words, words not in dictionary) (part 4)
+
+# Data Processing
+
+In a first step, the session is prepared by installing packages.
+
+
+```{r cooee_01_01, eval = F, message=FALSE, warning=FALSE}
+# load packages
+install.packages("tidyverse")
+install.packages("tidytext")
+install.packages("tidyr")
+install.packages("tm")
+install.packages("tokenizers")
+install.packages("qdap")
+install.packages("textstem")
+install.packages("corpus")
+install.packages("ngram")
+```
+
+Now, we activate the packages, set options, load relevant functions, and defining the path to the data.
+
+```{r cooee_01_03}
+# set options
+options(stringsAsFactors = F)
+options(scipen = 999)
+# load packages
+library(tidyverse)
+library(tidytext)
+library(tidyr)
+library(tm)
+library(tokenizers)
+library(qdap)
+library(textstem)
+library(corpus)
+library(ngram)
+library(quanteda)
+# specify path to corpus
+corpuspath <- "D:\\Uni\\Korpora\\Original\\COOEE\\COOEE-single_files"
+# specify path to metadata
+metapath <- "D:\\Uni\\Korpora\\Original\\COOEE/COOEE.XLS"
+# for pos-tagging objects in R
+source("D:\\R/POStagObject.R") 
+```
+
+
+In a next step, we load and process the corpus data.
+
+
+```{r  cooee_01_05, warning=F, message=F}
+# load corpus files
+cooeefiles = list.files(path = corpuspath, all.files = T, full.names = T, recursive = T, ignore.case = T, include.dirs = T)
+# load and unlist corpus
+cooee <- sapply(cooeefiles, function(x) {
+  x <- scan(x, what = "char", sep = "", quote = "\"", quiet = T, skipNul = T)
+  x <- stringr::str_squish(x)
+  x <- paste0(x, collapse = " ")
+  x <- unlist(x)
+} )
+# inspect data
+str(cooee)
+```
+
+Convert data into a data frame.
+
+```{r  cooee_01_07, warning=F, message=F}
+cooeedf <- data.frame(cooeefiles, cooee) %>%
+  dplyr::rename(Nr = colnames(.)[1],
+                Rawtext = colnames(.)[2]) %>%
+  dplyr::mutate(Nr = stringr::str_replace_all(Nr, ".*/(.*).txt", "\\1")) %>%
+  as.tibble()
+# inspect
+head(cooeedf)
+```
+
+
+Extract metadata (corpus, file, date, etc.)
+
+```{r  cooee_01_09, warning=F, message=F}
+meta <- readxl::read_xls(metapath)
+cnames <- as.vector(unlist(meta[1,])) %>%
+  stringr::str_remove_all(" ")
+cnames[c(14:16)] <- c("Words", "GenderAddressee", "StatusAddressee")
+meta <- meta[2:nrow(meta),]
+colnames(meta) <- cnames
+meta <- meta  %>%
+  dplyr::mutate(id = 1:nrow(.))
+# inspect
+head(meta)
+```
+
+Combine 
+
+```{r  cooee_01_11, warning=F, message=F}
+# combine into table
+cooeed <- meta %>% dplyr::inner_join(cooeedf, by = "Nr")
+# inpspect
+head(cooeed)
+```
+
+Process and clean data
+
+```{r cooee_01_13, warning=F, message=F}
+# clean files
+cooeed_clean <- cooeed %>%
+  dplyr::mutate(Text = Rawtext) %>%
+  dplyr::mutate(Text = stringr::str_remove_all(Text, "\\[/{0,1}.*?\\]"),
+                Text = stringr::str_remove_all(Text, "\\</{0,1}.*?\\>"),
+                Text = stringr::str_remove_all(Text, "\\{|\\}"),
+                Datecat = dplyr::case_when(as.numeric(YearWriting) < 1800 ~ "1788-1800",
+                                           as.numeric(YearWriting) < 1820 ~ "1801-1820",
+                                           as.numeric(YearWriting) < 1840 ~ "1821-1840",
+                                           as.numeric(YearWriting) < 1860 ~ "1841-1860",  
+                                           as.numeric(YearWriting) < 1880 ~ "1861-1880", 
+                                           as.numeric(YearWriting) <= 1900 ~ "1881-1900",
+                                           TRUE ~ YearWriting),
+                Datecat = factor(Datecat)) %>%
+  # Words
+  dplyr::mutate(Words = stringr::str_replace_all(Text, "\\W", " "),
+                Words = stringr::str_squish(Words),
+                Words = stringr::str_count(Words, "\\w+"))
+# inspect
+head(cooeed_clean)
+```
+
+
+
+
+
+
+```{r cooee_01_17}
+# define stopword regex
+stopwords_regex = paste(tm::stopwords('en'), collapse = '\\b|\\b')
+stopwords_regex = paste0('\\b', stopwords_regex, '\\b')
+# remove stopwords
+cooeed_clean <- cooeed_clean %>%
+  dplyr::filter(Register == "PrW") %>%
+  dplyr::mutate(Text_clean = stringr::str_remove_all(tolower(Text), stopwords_regex),
+                Text_clean = stringr::str_remove_all(Text_clean, "[^[:alpha:] ]"),
+                Text_clean = stringr::str_squish(Text_clean))
+# save data
+base::saveRDS(cooeed_clean, file = here::here("data", "cooeed_clean.rda"))
+# inspect
+head(cooeed_clean)
+```
+
+
+
+Check data
+
+```{r cooee_01_19}
+table(cooeed_clean$Datecat)
+```
+
+# Control corpus
+
+We now generate a parallel table of data from letters not written by Irish emigrants
+
+```{r  cooee_01_23, warning=F, message=F}
+controlpath <- "D:\\Uni\\Korpora\\Original\\A Corpus of late 18c Prose\\2468/orford.txt"
+# load and unlist corpus
+control <- scan(controlpath, what = "char", sep = "", quote = "\"", quiet = T, skipNul = T) %>%
+  stringr::str_squish() %>%
+  paste0(collapse = " ") %>%
+  stringr::str_split("<A ") %>%
+  unlist()
+control <- control %>%
+  as.data.frame() %>%
+  dplyr::rename(Rawtext = colnames(.)[1])
+# inspect
+str(control)
+```
+
+
+
+```{r  cooee_01_25, warning=F, message=F}
+# clean files
+control_clean <- control %>%
+  dplyr::filter(Rawtext != "") %>%
+  dplyr::mutate(Text = Rawtext) %>%
+  dplyr::mutate(Text = stringr::str_remove_all(Text, "\\[/{0,1}.*?\\]"),
+                Text = stringr::str_remove_all(Text, "\\</{0,1}.*?\\>"),
+                Text = stringr::str_remove_all(Text, "\\{|\\}"),
+                Text_clean = stringr::str_remove_all(Text, "[^[:alpha:] ]"),
+                Text_clean = stringr::str_replace_all(tolower(Text_clean), stopwords_regex, ""),
+                id = 1:nrow(.)) %>%
+  dplyr::mutate(YearWriting = gsub(".*<O \\?{0,2}([0-9]{2,4})\\?{0,2}.{0,2}>.*", "\\1", Rawtext),
+                YearWriting = stringr::str_pad(YearWriting, 4, side = "right", pad = "0"),
+               Datecat = dplyr::case_when(as.numeric(YearWriting) < 1800 ~ "1788-1800",
+                                           as.numeric(YearWriting) < 1820 ~ "1801-1820",
+                                           as.numeric(YearWriting) < 1840 ~ "1821-1840",
+                                           as.numeric(YearWriting) < 1860 ~ "1841-1860",  
+                                           as.numeric(YearWriting) < 1880 ~ "1861-1880", 
+                                           as.numeric(YearWriting) <= 1900 ~ "1881-1900",
+                                           TRUE ~ "unknown"),
+                Datecat = factor(Datecat))
+# save data
+base::saveRDS(control_clean, file = here::here("data", "control_clean.rda"))
+# inspect data
+head(control_clean)
+```
+
+# Corpus Exploration
+
+## COOEE
+
+```{r train, message=F, warning=F}
+cooeetb <- cooeed_clean %>%
+  dplyr::select(Birth, Gender, Origin, Age, Status, Arrival, Abode, YearWriting, 
+                PlaceWriting, TextT, Words, Text_clean, Datecat) %>%
+  dplyr::mutate(Gender = dplyr::case_when(Gender == "m" ~ "male", 
+                                          Gender == "f" ~ "female",
+                                          TRUE ~ "unknown")) %>% 
+  dplyr::rowwise() %>%
+  dplyr::mutate(Tokens = length(unlist(tokenize_fasterword(Text_clean))),
+                Types = length(table(unlist(tokenize_fasterword(Text_clean)))))
+# inspect
+head(cooeetb)
+```
+
+tab: date, gender, types, tokens
+
+
+
+```{r}
+tab01 <- cooeetb %>%
+  dplyr::group_by(Datecat, Gender) %>%
+  dplyr::summarise(Letters = n(),
+                   Types = sum(Types),
+                   Tokens = sum(Tokens),
+                   MeanLength = round(Tokens/Letters, 1))
+readr::write_delim(tab01, here::here("tables", "tab01.txt"), delim = "\t")
+# inspect
+tab01
+```
+
+
+
+```{r}
+tab02 <- cooeetb %>%
+  dplyr::group_by(Gender) %>%
+  dplyr::summarise(Letters = n(),
+                   Types = sum(Types),
+                   Tokens = sum(Tokens))
+readr::write_delim(tab02, here::here("tables", "tab02.txt"), delim = "\t")
+# inspect
+tab02
+```
+
+check percentage of letters written by women
+
+
+```{r}
+# percent women
+178/(429+178)*100
+# average length
+sum(tab01$Tokens)/sum(tab01$Letters)
+
+
+```
+
+## CoRD 
+
+inspect control data
+
+```{r}
+head(control_clean)
+```
+
+generate overview table for control corpus by year
+
+```{r train, message=F, warning=F}
+controltb <- control_clean %>%
+  dplyr::select(YearWriting, Text, Datecat) %>%
+  dplyr::mutate(Text = stringr::str_squish(Text)) %>%
+  dplyr::rowwise() %>%
+  dplyr::mutate(Tokens = length(unlist(tokenize_fasterword(Text))),
+                Types = length(table(unlist(tokenize_fasterword(Text)))))
+# inspect
+head(controltb)
+```
+
+generate overview table for control corpus by period
+
+```{r}
+tab03 <- controltb %>%
+  dplyr::group_by(Datecat) %>%
+  dplyr::summarise(Letters = n(),
+                   Types = sum(Types),
+                   Tokens = sum(Tokens),
+                   MeanLength = round(Tokens/Letters, 1))
+readr::write_delim(tab03, here::here("tables", "tab03.txt"), delim = "\t")
+# inspect
+tab03
+```
+
+# Map
+
+check number of letters by region
+
+```{r}
+table(cooeed_clean$PlaceWriting)
+```
+
+load packages and and data
+
+```{r}
+# load packages
+library(tmap) 
+library(here)
+library(rgdal)
+# load shape files
+ozmap <- readOGR(dsn = here::here("data/shapes", "AshmoreAndCartierIslands.shp"), stringsAsFactors = F)
+```
+
+process data
+
+```{r}
+# convert the data into tidy format
+ozmapt <- broom::tidy(ozmap, region = "name")
+# inspect data
+head(ozmapt)
+```
+
+clean map data
+
+```{r}
+# extract names of states and their long and lat
+cnames <- ozmapt %>%
+  dplyr::group_by(id) %>%
+  dplyr::summarise(long = mean(long),
+                   lat = mean(lat)) %>%
+  dplyr::filter(id != "Ashmore and Cartier Islands",
+                id != "Christmas Island",
+                id != "Cocos (Keeling) Islands",
+                id != "Coral Sea Islands Territory",
+                id != "Heard Island and McDonald Islands",
+                id != "Jervis Bay Territory",
+                id != "Norfolk Island",
+                id != "Australian Capital Territory") %>%
+  dplyr::mutate(long = ifelse(id == "Queensland", long-5, long ),      # to left
+                long = ifelse(id == "New South Wales", long-2, long ),
+                long = ifelse(id == "Northern Territory", long-1, long ),
+                lat = ifelse(id == "New South Wales", lat+2, lat ),    # up
+                lat = ifelse(id == "Northern Territory", lat-5, lat ),
+                lat = ifelse(id == "Victoria", lat+1, lat ),
+                lat = ifelse(id == "South Australia", lat+5, lat ),
+                lat = ifelse(id == "Western Australia", lat-3, lat )) %>%
+  dplyr::mutate(id = ifelse(id == "New South Wales", "New South Wales\n(196 letters)", id ),
+                id = ifelse(id == "Queensland", "Queensland\n(16 letters)", id ),
+                id = ifelse(id == "South Australia", "South Australia\n(31 letters)", id ),
+                id = ifelse(id == "Tasmania", "Tasmania\n(28 letters)", id ),
+                id = ifelse(id == "Victoria", "Victoria\n(240 letters)", id ),
+                id = ifelse(id == "Western Australia", "Western Australia\n(87 letters)", id ))
+# inspect
+cnames
+```
+
+define colors for states and text
+
+```{r}
+# define colors
+#library(scales)
+#clrs <- viridis_pal()(15)
+# inspect
+clrs <- c("gray99",
+          "gray99",
+          "gray99",
+          "gray99",
+          "gray99",
+          "gray99",
+          "gray99",
+          "gray40", # NSW
+          "gray99",
+          "gray95", # NT
+          "gray90", # QLD
+          "gray80", # SA
+          "gray85", # TAS
+          "gray25", # VIC
+          "gray70") # wa
+tclrs <- c("white", # NSW
+          "gray20", # NT
+          "gray20", # QLD
+          "gray20", # SA
+          "gray20", # TAS
+          "white", # VIC
+          "gray20") # wa
+```
+
+
+generate map
+
+```{r}
+# plot ozmap
+p <- ggplot() +
+  # plot map
+  geom_polygon(data = ozmapt, 
+               aes(x = long, y = lat, group = group, fill = id), 
+               asp = 1, colour = NA) +
+  # add text
+  geom_text(data = cnames, aes(x = long, y = lat, label = id), 
+            size = 2.5, color = tclrs, fontface = "bold", 
+            check_overlap = T) +
+  # color states
+  scale_fill_manual(values = clrs) +
+  # define theme and axes
+  theme_void() +
+  scale_x_continuous(name = "Longitude", limits = c(113, 155)) +
+  scale_y_continuous(name = "Latitude", limits = c(-45, -10)) +
+  # def. background color
+  theme(panel.background = element_rect(fill = "white",
+                                        colour = "white",
+                                        size = 0.5, linetype = "solid"),
+        legend.position = "none")
+ggsave(file = here::here("images", "letter_map.png"), 
+         height = 4,  width = 5, dpi = 320)
+# show plot
+p
+```
+
+
+# Outro
+
+```{r  cooee_01_29}
+sessionInfo()
+```
+
+
+# References

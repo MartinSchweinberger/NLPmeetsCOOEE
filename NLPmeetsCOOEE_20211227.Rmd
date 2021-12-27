@@ -1,0 +1,1061 @@
+---
+title: "Analysis of the Corpus of Oz Early English - Part 1: Data Preparation"
+author: "Anonymous"
+date: "`r format(Sys.time(), '%Y-%m-%d')`"
+output:
+  bookdown::html_document2: default
+bibliography: Bibliography.bib
+link-citations: yes
+---
+
+# Introduction
+
+This document shows an analysis of Corpus of Oz Early English  (COOEE) [@fritz2004cooee]. 
+
+## Aims
+
+* Find keywords  (part 2)
+
+* Check for distribution of keywords by date (mosaic plot)  (part 2)
+
+* Create network of keywords (network analysis)  (part 2)
+
+* Find topics (topic modeling) (part 3)
+
+* Error analysis (misspelled words, words not in dictionary) (part 4)
+
+# Data Processing
+
+In a first step, the session is prepared by installing packages.
+
+
+```{r cooee_01_01, eval = F, message=FALSE, warning=FALSE}
+# install packages
+install.packages("corpus")
+install.packages("here")
+install.packages("lubridate")
+install.packages("ngram")
+install.packages("qdap")
+install.packages("quanteda")
+install.packages("quanteda.textmodels")
+install.packages("quanteda.textplots")
+install.packages("quanteda.textstats")
+install.packages("rgdal")
+install.packages("seededlda")
+install.packages("textstem")
+install.packages("tidyr")
+install.packages("tidytext")
+install.packages("tidyverse")
+install.packages("tm")
+install.packages("tmap") 
+install.packages("tokenizers")
+```
+
+Now, we activate the packages, set options, load relevant functions, and defining the path to the data.
+
+```{r cooee_01_03}
+# set options
+options(stringsAsFactors = F)
+options(scipen = 999)
+# load packages
+library(corpus)
+library(here)
+library(lubridate)
+library(ngram)
+library(qdap)
+library(quanteda)
+library(quanteda.textmodels)
+library(quanteda.textplots)
+library(quanteda.textstats)
+library(rgdal)
+library(seededlda)
+library(textstem)
+library(tidyr)
+library(tidytext)
+library(tidyverse)
+library(tm)
+library(tmap) 
+library(tokenizers)
+# specify path to corpus
+corpuspath <- "D:\\Uni\\Korpora\\Original\\COOEE\\COOEE-single_files"
+# specify path to metadata
+metapath <- "D:\\Uni\\Korpora\\Original\\COOEE/COOEE.XLS"
+# load shape files
+ozmap <- readOGR(dsn = here::here("data/shapes", "AshmoreAndCartierIslands.shp"), 
+                 stringsAsFactors = F)
+```
+
+
+# COOEE
+
+We now load and process the *Corpus of Oz Early English*  (COOEE) [@fritz2004cooee]. .
+
+
+```{r  cooee_01_05, warning=F, message=F}
+# load corpus files
+cooeefiles = list.files(path = corpuspath, all.files = T, full.names = T, recursive = T, ignore.case = T, include.dirs = T)
+# load and unlist corpus
+cooee <- sapply(cooeefiles, function(x) {
+  x <- scan(x, what = "char", sep = "", quote = "\"", quiet = T, skipNul = T)
+  x <- stringr::str_squish(x)
+  x <- paste0(x, collapse = " ")
+  x <- unlist(x)
+} )
+# inspect data
+str(cooee)
+```
+
+Convert data into a data frame.
+
+```{r  cooee_01_07, warning=F, message=F}
+cooeedf <- data.frame(cooeefiles, cooee) %>%
+  dplyr::rename(Nr = colnames(.)[1],
+                Rawtext = colnames(.)[2]) %>%
+  dplyr::mutate(Nr = stringr::str_replace_all(Nr, ".*/(.*).txt", "\\1")) %>%
+  as.tibble()
+# inspect
+head(cooeedf)
+```
+
+
+Extract metadata (corpus, file, date, etc.)
+
+```{r  cooee_01_09, warning=F, message=F}
+meta <- readxl::read_xls(metapath)
+cnames <- as.vector(unlist(meta[1,])) %>%
+  stringr::str_remove_all(" ")
+cnames[c(14:16)] <- c("Words", "GenderAddressee", "StatusAddressee")
+meta <- meta[2:nrow(meta),]
+colnames(meta) <- cnames
+meta <- meta  %>%
+  dplyr::mutate(id = 1:nrow(.))
+# inspect
+head(meta)
+```
+
+Combine meta data and corpus content 
+
+```{r  cooee_01_11, warning=F, message=F}
+# combine into table
+cooeed <- meta %>% dplyr::inner_join(cooeedf, by = "Nr")
+# inpspect
+head(cooeed)
+```
+
+Process and clean data
+
+```{r cooee_01_13, warning=F, message=F}
+# clean files
+cooeed_clean <- cooeed %>%
+  dplyr::mutate(Text = Rawtext) %>%
+  dplyr::mutate(Text = stringr::str_remove_all(Text, "\\[/{0,1}.*?\\]"),
+                Text = stringr::str_remove_all(Text, "\\</{0,1}.*?\\>"),
+                Text = stringr::str_remove_all(Text, "\\{|\\}"),
+                Datecat = dplyr::case_when(as.numeric(YearWriting) < 1800 ~ "1788-1800",
+                                           as.numeric(YearWriting) < 1820 ~ "1801-1820",
+                                           as.numeric(YearWriting) < 1840 ~ "1821-1840",
+                                           as.numeric(YearWriting) < 1860 ~ "1841-1860",  
+                                           as.numeric(YearWriting) < 1880 ~ "1861-1880", 
+                                           as.numeric(YearWriting) <= 1900 ~ "1881-1900",
+                                           TRUE ~ YearWriting),
+                Datecat = factor(Datecat)) %>%
+  # Words
+  dplyr::mutate(Words = stringr::str_replace_all(Text, "\\W", " "),
+                Words = stringr::str_squish(Words),
+                Words = stringr::str_count(Words, "\\w+"))
+# inspect
+head(cooeed_clean)
+```
+
+
+
+
+
+
+```{r cooee_01_17}
+# define stopword search pattern
+stopwords_regex = paste(stopwords('en'), collapse = '\\b|\\b')
+custregex <- c("\\b|\\bone\\b|\\b[:alnum:]{1,3}\\b|\\b[0-9]{1,3}[a-z]{2,2}\\b|\\balso\\b|\\bmust\\b|\\bmany\\b|\\bmuch\\b|\\bmevery\\b")
+stopwords_regex = paste0('\\b', stopwords_regex, custregex)
+# remove stopwords
+cooeed_clean <- cooeed_clean %>%
+  dplyr::filter(Register == "PrW") %>%
+  dplyr::mutate(Text_clean = stringr::str_remove_all(tolower(Text), stopwords_regex),
+                Text_clean = stringr::str_remove_all(Text_clean, "[^[:alpha:] ]"),
+                Text_clean = stringr::str_squish(Text_clean)) %>%
+  dplyr::mutate(Text_semiclean = stringr::str_remove_all(Text, stopwords_regex),
+                Text_semiclean = stringr::str_squish(Text_semiclean))
+# save data
+base::saveRDS(cooeed_clean, file = here::here("data", "cooeed_clean.rda"))
+# inspect
+head(cooeed_clean)
+```
+
+
+
+
+Check how many letters were written in each period
+
+```{r cooee_01_19}
+table(cooeed_clean$Datecat)
+```
+
+# CoRD (control)
+
+We now generate a parallel table of data based on the CoRD [@denison2003cord]. The CoRD contains letters not written in Australia or by Australians
+
+Load and pre-process data
+
+```{r  cooee_01_23, warning=F, message=F}
+controlpath <- "D:\\Uni\\Korpora\\Original\\A Corpus of late 18c Prose\\2468/orford.txt"
+# load and unlist corpus
+control <- scan(controlpath, what = "char", sep = "", quote = "\"", quiet = T, skipNul = T) %>%
+  stringr::str_squish() %>%
+  paste0(collapse = " ") %>%
+  stringr::str_split("<A ") %>%
+  unlist()
+control <- control %>%
+  as.data.frame() %>%
+  dplyr::rename(Rawtext = colnames(.)[1])
+# inspect
+str(control)
+```
+
+Generate data frame
+
+```{r  cooee_01_25, warning=F, message=F}
+# clean files
+control_clean <- control %>%
+  dplyr::filter(Rawtext != "") %>%
+  dplyr::mutate(Text = Rawtext) %>%
+  dplyr::mutate(Text = stringr::str_remove_all(Text, "\\[/{0,1}.*?\\]"),
+                Text = stringr::str_remove_all(Text, "\\</{0,1}.*?\\>"),
+                Text = stringr::str_remove_all(Text, "\\{|\\}"),
+                Text_clean = stringr::str_remove_all(Text, "[^[:alpha:] ]"),
+                Text_clean = stringr::str_replace_all(tolower(Text_clean), stopwords_regex, ""),
+                id = 1:nrow(.)) %>%
+  dplyr::mutate(YearWriting = gsub(".*<O \\?{0,2}([0-9]{2,4})\\?{0,2}.{0,2}>.*", "\\1", Rawtext),
+                YearWriting = stringr::str_pad(YearWriting, 4, side = "right", pad = "0"),
+               Datecat = dplyr::case_when(as.numeric(YearWriting) < 1800 ~ "1788-1800",
+                                           as.numeric(YearWriting) < 1820 ~ "1801-1820",
+                                           as.numeric(YearWriting) < 1840 ~ "1821-1840",
+                                           as.numeric(YearWriting) < 1860 ~ "1841-1860",  
+                                           as.numeric(YearWriting) < 1880 ~ "1861-1880", 
+                                           as.numeric(YearWriting) <= 1900 ~ "1881-1900",
+                                           TRUE ~ "unknown"),
+                Datecat = factor(Datecat))
+# save data
+base::saveRDS(control_clean, file = here::here("data", "control_clean.rda"))
+# inspect data
+head(control_clean)
+```
+
+# Corpus Exploration
+
+## COOEE
+
+```{r train, message=F, warning=F}
+cooeetb <- cooeed_clean %>%
+  dplyr::select(Birth, Gender, Origin, Age, Status, Arrival, Abode, YearWriting, 
+                PlaceWriting, TextT, Words, Text_clean, Datecat) %>%
+  dplyr::mutate(Gender = dplyr::case_when(Gender == "m" ~ "male", 
+                                          Gender == "f" ~ "female",
+                                          TRUE ~ "unknown")) %>% 
+  dplyr::rowwise() %>%
+  dplyr::mutate(Tokens = length(unlist(tokenize_fasterword(Text_clean))),
+                Types = length(table(unlist(tokenize_fasterword(Text_clean)))))
+# inspect
+head(cooeetb)
+```
+
+tab: date, gender, types, tokens
+
+
+
+```{r}
+tab01 <- cooeetb %>%
+  dplyr::group_by(Datecat, Gender) %>%
+  dplyr::summarise(Letters = n(),
+                   Types = sum(Types),
+                   Tokens = sum(Tokens),
+                   MeanLength = round(Tokens/Letters, 1))
+readr::write_delim(tab01, here::here("tables", "tab01.txt"), delim = "\t")
+# inspect
+tab01
+```
+
+
+
+```{r}
+tab02 <- cooeetb %>%
+  dplyr::group_by(Gender) %>%
+  dplyr::summarise(Letters = n(),
+                   Types = sum(Types),
+                   Tokens = sum(Tokens))
+readr::write_delim(tab02, here::here("tables", "tab02.txt"), delim = "\t")
+# inspect
+tab02
+```
+
+check percentage of letters written by women
+
+
+```{r}
+# percent women
+178/(429+178)*100
+# average length
+sum(tab01$Tokens)/sum(tab01$Letters)
+
+
+```
+
+## CoRD 
+
+inspect control data
+
+```{r}
+head(control_clean)
+```
+
+generate overview table for control corpus by year
+
+```{r train, message=F, warning=F}
+controltb <- control_clean %>%
+  dplyr::select(YearWriting, Text, Datecat) %>%
+  dplyr::mutate(Text = stringr::str_squish(Text)) %>%
+  dplyr::rowwise() %>%
+  dplyr::mutate(Tokens = length(unlist(tokenize_fasterword(Text))),
+                Types = length(table(unlist(tokenize_fasterword(Text)))))
+# inspect
+head(controltb)
+```
+
+generate overview table for control corpus by period
+
+```{r}
+tab03 <- controltb %>%
+  dplyr::group_by(Datecat) %>%
+  dplyr::summarise(Letters = n(),
+                   Types = sum(Types),
+                   Tokens = sum(Tokens),
+                   MeanLength = round(Tokens/Letters, 1))
+readr::write_delim(tab03, here::here("tables", "tab03.txt"), delim = "\t")
+# inspect
+tab03
+```
+
+# Mapping
+
+Generate a geo-spacial map showing where documents originated.
+
+check number of letters by region
+
+```{r}
+table(cooeed_clean$PlaceWriting)
+```
+
+process data
+
+```{r}
+# convert the data into tidy format
+ozmapt <- broom::tidy(ozmap, region = "name")
+# inspect data
+head(ozmapt)
+```
+
+clean map data
+
+```{r}
+# extract names of states and their long and lat
+cnames <- ozmapt %>%
+  dplyr::group_by(id) %>%
+  dplyr::summarise(long = mean(long),
+                   lat = mean(lat)) %>%
+  dplyr::filter(id != "Ashmore and Cartier Islands",
+                id != "Christmas Island",
+                id != "Cocos (Keeling) Islands",
+                id != "Coral Sea Islands Territory",
+                id != "Heard Island and McDonald Islands",
+                id != "Jervis Bay Territory",
+                id != "Norfolk Island",
+                id != "Australian Capital Territory") %>%
+  dplyr::mutate(long = ifelse(id == "Queensland", long-5, long ),      # to left
+                long = ifelse(id == "New South Wales", long-2, long ),
+                long = ifelse(id == "Northern Territory", long-1, long ),
+                lat = ifelse(id == "New South Wales", lat+2, lat ),    # up
+                lat = ifelse(id == "Northern Territory", lat-5, lat ),
+                lat = ifelse(id == "Victoria", lat+1, lat ),
+                lat = ifelse(id == "South Australia", lat+5, lat ),
+                lat = ifelse(id == "Western Australia", lat-3, lat )) %>%
+  dplyr::mutate(id = ifelse(id == "New South Wales", "New South Wales\n(196 letters)", id ),
+                id = ifelse(id == "Queensland", "Queensland\n(16 letters)", id ),
+                id = ifelse(id == "South Australia", "South Australia\n(31 letters)", id ),
+                id = ifelse(id == "Tasmania", "Tasmania\n(28 letters)", id ),
+                id = ifelse(id == "Victoria", "Victoria\n(240 letters)", id ),
+                id = ifelse(id == "Western Australia", "Western Australia\n(87 letters)", id ))
+# inspect
+cnames
+```
+
+define colors for states and text
+
+```{r}
+# define colors
+#library(scales)
+#clrs <- viridis_pal()(15)
+# inspect
+clrs <- c("gray99",
+          "gray99",
+          "gray99",
+          "gray99",
+          "gray99",
+          "gray99",
+          "gray99",
+          "gray40", # NSW
+          "gray99",
+          "gray95", # NT
+          "gray90", # QLD
+          "gray80", # SA
+          "gray85", # TAS
+          "gray25", # VIC
+          "gray70") # wa
+tclrs <- c("white", # NSW
+          "gray20", # NT
+          "gray20", # QLD
+          "gray20", # SA
+          "gray20", # TAS
+          "white", # VIC
+          "gray20") # wa
+```
+
+
+generate map
+
+```{r}
+# plot ozmap
+ozmap <- ggplot() +
+  # plot map
+  geom_polygon(data = ozmapt, 
+               aes(x = long, y = lat, group = group, fill = id), 
+               asp = 1, colour = NA) +
+  # add text
+  geom_text(data = cnames, aes(x = long, y = lat, label = id), 
+            size = 2.5, color = tclrs, fontface = "bold", 
+            check_overlap = T) +
+  # color states
+  scale_fill_manual(values = clrs) +
+  # define theme and axes
+  theme_void() +
+  scale_x_continuous(name = "Longitude", limits = c(113, 155)) +
+  scale_y_continuous(name = "Latitude", limits = c(-45, -10)) +
+  # def. background color
+  theme(panel.background = element_rect(fill = "white",
+                                        colour = "white",
+                                        size = 0.5, linetype = "solid"),
+        legend.position = "none")
+ggsave(file = here::here("images", "letter_map.png"), 
+         height = 4,  width = 5, dpi = 320)
+# show plot
+ozmap
+```
+
+# Keyword Analysis
+
+inspect corpus data.
+
+
+```{r}
+# inspect
+head(cooee_clean)
+```
+
+
+
+# Extract Keywords
+
+Create training set
+
+```{r train, message=F, warning=F}
+train_c <- control_clean %>%
+  dplyr::mutate(Label = "nonCOOEE") %>%
+  dplyr::select(id, Text_clean, Label) 
+train_cooee <- cooee_clean %>%
+  dplyr::mutate(Label = "COOEE") %>%
+  dplyr::select(id, Text_clean, Label)
+train <- rbind(train_cooee, train_c)
+# inspect
+head(train)
+```
+
+extract uni- to trigrams in cooee
+
+```{r}
+# tokenize, tolower, remove stopwords and create ngrams
+cooee_toks <- tokens(train_cooee$Text_clean) 
+cooee_tokngrms <- tokens_ngrams(cooee_toks, n = 1:3)
+cooee_ngrmfreq <- train_cooee %>% 
+  tidytext::unnest_ngrams(cooee_tokngrms, Text_clean, n = 3, n_min = 1, ngram_delim = "_") %>% 
+  dplyr::count(cooee_tokngrms) %>%
+  dplyr::rename("ngram" = colnames(.)[1],
+                "cooee" = colnames(.)[2])
+# inspect
+cooee_ngrmfreq
+```
+
+extract uni- to trigrams in corpus of late 18 century prose
+
+```{r}
+# tokenize, tolower, remove stopwords and create ngrams
+c_toks <- tokens(train_c$Text_clean) 
+c_tokngrms <- tokens_ngrams(c_toks, n = 1:3)
+c_ngrmfreq <- train_c %>% 
+  tidytext::unnest_ngrams(c_tokngrms, Text_clean, n = 3, n_min = 1, ngram_delim = "_") %>% 
+  dplyr::count(c_tokngrms) %>%
+  dplyr::rename("ngram" = colnames(.)[1],
+                "cl18p" = colnames(.)[2])
+# inspect
+c_ngrmfreq
+```
+
+combine
+
+```{r}
+ngramfreqtb <- dplyr::full_join(cooee_ngrmfreq, c_ngrmfreq, by = "ngram") %>%
+  tidyr::replace_na(list(cooee = 0, cl18p = 0))
+# inspect
+head(ngramfreqtb)
+```
+
+
+Prepare for statistical extraction of keywords
+
+```{r}
+keywordtb <- ngramfreqtb %>%
+  dplyr::mutate(Total = cooee+cl18p) %>%
+  dplyr::filter(Total > 10) %>%
+  dplyr::mutate(TotalTarget = sum(cooee),
+                TotalNonTarget = sum(cl18p),
+                NRows = length(ngram)) %>%
+  dplyr::rename(Target = cooee,
+                NonTarget = cl18p,
+                Word = ngram) %>%
+  dplyr::select(-Total)
+# inspect data
+keywordtb
+```
+
+
+
+
+Perform statistics
+
+```{r covtwit_01_12, echo=T, eval = T, message=FALSE, warning=FALSE}
+source(here::here("scripts", "CoocStatzFisher.R"))
+# extract keywords
+keywords <- CoocStatzFisher(keywordtb)
+# filter sig. overused words 
+sigkeywords <- keywords %>%
+  dplyr::filter(CorrSignificance != "n.s.",
+                Type == "Overuse") %>%
+  dplyr::arrange(-phi)
+# inspect data
+sigkeywords$Word[1:100]; nrow(sigkeywords)
+```
+
+Select keywords with substantive effect size (phi > .02)
+
+```{r covtwit_01_12b, echo=T, eval = T, message=FALSE, warning=FALSE}
+# filter keywords with phi > .2
+bigsigkeywords <- sigkeywords %>%
+  dplyr::filter(phi > .02)
+readr::write_delim(bigsigkeywords, here::here("tables", "bigsigkeywords.txt"), delim = "\t")
+# inspect
+bigsigkeywords
+```
+
+
+
+Extract relative frequency of Irish letters
+
+```{r covtwit_01_13, echo=T, eval = T, message=FALSE, warning=FALSE}
+cooeeterms <- sigkeywords$Word
+cooee_regex <- paste0("\\b", cooeeterms, "\\b|", collapse = "")
+# extract frequencies
+cooeefreq <- cooee_clean %>%
+  dplyr::select(Datecat, Text_clean, Words) %>%
+  dplyr::mutate(Frequency = stringr::str_count(Text_clean, cooee_regex),
+                RFrequency = Frequency/Words*100) %>%
+  dplyr::group_by(Datecat) %>%
+  dplyr::summarise(RelativeFrequency = mean(RFrequency)) %>%
+  dplyr::mutate(NumDate = 1:length(Datecat),
+                Datecat = factor(Datecat))
+# inspect data
+cooeefreq
+```
+
+
+Plot relative frequency of cooee texts
+
+```{r covtwit_01_14, echo=T, eval = T, message=FALSE, warning=FALSE}
+ggplot(cooeefreq, aes(x = NumDate, y = RelativeFrequency, label = round(RelativeFrequency, 2))) +
+  geom_bar(stat = "identity") +
+  scale_x_discrete(breaks = cooeefreq$NumDate,
+                   labels = cooeefreq$Datecat,
+                   limits = 1: max(cooeefreq$NumDate)) +
+  labs(x = "Date", y = "Relative Frequency of Keyterms\n(per 1,000 words)") +
+  theme_set(theme_bw(base_size = 10)) +
+  theme(legend.position="none",
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        axis.text.x = element_text(angle = 90, size =7.5)) +
+  geom_text(vjust=-1.6, color = "black") +
+  coord_cartesian(ylim = c(0, 400))
+```
+
+
+Plot relative frequencies of Oz terms
+
+```{r covtwit_01_38, echo=T, eval = T, message=FALSE, warning=FALSE}
+keywordselection <- c("convicts", "family", "natives", 
+                      "australia", "colony", "ship",
+                      "creek", "travelled", "journey")
+# extract frequencies
+kwfreqs <- cooee_clean %>%
+  dplyr::select(YearWriting, Text_clean, Words, Datecat) %>%
+  dplyr::group_by(YearWriting) %>%
+  dplyr::summarise(Text_clean = paste(Text_clean, collapse = " "),
+                   Words = sum(Words),
+                   Datecat = Datecat) %>%
+  dplyr::ungroup() %>%
+  unnest_tokens(Word, Text_clean) %>%
+  dplyr::filter(Word %in% keywordselection) %>%
+  dplyr::group_by(Word, YearWriting) %>%
+  dplyr::summarise(NoWords = n(),
+                   Percent = NoWords/unique(Words)*100,
+                   Datecat = Datecat) %>%
+  dplyr::ungroup() %>%
+  dplyr::select(-NoWords) %>%
+  dplyr::mutate(YearWriting = factor(YearWriting),
+                NumDate = as.numeric(YearWriting),
+                Word = factor(Word))
+# inspect data
+head(kwfreqs)
+```
+
+Plot frequencies of selected keywords as line graph
+
+```{r covtwit_01_39, echo=T, eval = T, message=FALSE, warning=FALSE}
+p7d <- kwfreqs %>%
+  dplyr::mutate(YearWriting = factor(YearWriting),
+                NumDate = as.numeric(YearWriting),
+                Word = factor(Word))
+
+ggplot(p7d, aes(x = NumDate, y = Percent)) +
+  facet_wrap(vars(Word), ncol = 3, scales="free_y") +
+  geom_line(color = "gray80", size = .5) +
+  geom_smooth(se = F, span = .4, color = "gray40", size = .75) +
+  scale_x_discrete(breaks = p7d$NumDate[seq(1, length(p7d$NumDate), by = 100)],
+                   labels = p7d$YearWriting[seq(1, length(p7d$YearWriting), by = 100)],
+                   limit = 1:length(p7d$YearWriting)) +
+  labs(x = "Date", y = "Percent (of words)") +
+  theme_set(theme_bw(base_size = 12)) +
+  theme(legend.position="none",
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        axis.text.x = element_text(angle = 90, size =7))
+ggsave(file = here::here("images", "selected_keywords.png"), 
+         height = 7,  width = 14, dpi = 320)
+```
+
+With periods
+
+```{r covtwit_01_40, echo=T, eval = T, message=FALSE, warning=FALSE}
+p7d %>%
+  dplyr::group_by(Datecat, Word) %>%
+  dplyr::summarise(Percent = round(mean(Percent), 2)) %>%
+  ggplot(aes(x = Datecat, y = Percent)) +
+  facet_wrap(vars(Word), ncol = 3, scales="free_y") +
+  geom_bar(stat = "identity", size = .5) +
+  labs(x = "", y = "Percent (of words)") +
+  theme_set(theme_bw(base_size = 12)) +
+  theme(legend.position="none",
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        axis.text.x = element_text(angle = 90, size =10))
+ggsave(file = here::here("images", "selected_keywords_bar.png"), 
+         height = 5,  width = 7, dpi = 320)
+```
+
+# Keywords by Period
+
+convert data: have date, ngram, and frequencies of ngrams 
+
+```{r}
+# tokenize and create ngram freqs
+cooee_toks <- tokens(cooee_clean$Text_clean) 
+cooee_tokngrms <- tokens_ngrams(cooee_toks, n = 1)
+cooee_ngrmfreq <- cooee_clean %>%
+  dplyr::select(id, Datecat, Text_clean) %>%
+  dplyr::group_by(Datecat) %>%
+  tidytext::unnest_ngrams(cooee_tokngrms, Text_clean, n = 1, n_min = 1, ngram_delim = "_") %>% 
+  dplyr::count(cooee_tokngrms) %>%
+  dplyr::rename("Period" = colnames(.)[1],
+                "Word" = colnames(.)[2],
+                "Freq" = colnames(.)[3]) %>%
+  dplyr::rowwise() %>%
+  dplyr::mutate(Period = paste0("Period_", Period))
+# inspect
+cooee_ngrmfreq
+```
+
+convert to wide
+
+```{r}
+cooee_ngrmfreq_wd <- cooee_ngrmfreq %>%
+  tidyr::spread(Period, Freq) %>%
+  replace(is.na(.), 0) %>%
+  dplyr::filter(nchar(Word) > 2)
+# inspect
+cooee_ngrmfreq_wd
+```
+
+function fro keyword extraction
+
+```{r covtwit_04_05, echo=T, eval = T, message=FALSE, warning=FALSE}
+pdperiod <- function(perioddata, Targetperiod){
+  periodtb <- perioddata %>%
+    tidyr::gather(Period, Frequency, `Period_1788-1800`:`Period_1881-1900`) %>%
+    dplyr::mutate(Period = ifelse(Period != Targetperiod, "Other", Period)) %>%
+    dplyr::group_by(Period, Word) %>%
+    dplyr::mutate(Frequency = sum(Frequency)) %>%
+    unique() %>%
+    tidyr::spread(Period, Frequency) %>%
+    dplyr::rename(Target = Targetperiod, NonTarget = Other) %>%
+    dplyr::ungroup() %>%
+    dplyr::mutate(TotalTarget = sum(Target), TotalNonTarget = sum(NonTarget),
+                  NRows = n())
+  periodkeys <- CoocStatzFisher(periodtb)
+  periodkeys <- periodkeys %>%
+    dplyr::filter(CorrSignificance != "n.s.") %>%
+    dplyr::mutate(Period = rep(Targetperiod, length(CorrSignificance)))
+  return(periodkeys)
+}
+```
+
+Extract keywords
+
+```{r covtwit_04_06, echo=T, eval = T, message=FALSE, warning=FALSE}
+keys_period1 <- pdperiod(cooee_ngrmfreq_wd, "Period_1788-1800")
+keys_period2 <- pdperiod(cooee_ngrmfreq_wd, "Period_1801-1820")
+keys_period3 <- pdperiod(cooee_ngrmfreq_wd, "Period_1821-1840")
+keys_period4 <- pdperiod(cooee_ngrmfreq_wd, "Period_1841-1860")
+keys_period5 <- pdperiod(cooee_ngrmfreq_wd, "Period_1861-1880")
+keys_period6 <- pdperiod(cooee_ngrmfreq_wd, "Period_1881-1900")
+# inspect data
+head(keys_period1)
+```
+
+
+Combine keywords
+
+```{r covtwit_04_07, echo=T, eval = T, message=FALSE, warning=FALSE}
+period_keys <- rbind(keys_period1, keys_period2, keys_period3, 
+                     keys_period4, keys_period5, keys_period6) %>%
+  dplyr::arrange(-phi)
+# inspect data
+head(period_keys)
+```
+
+## Save data (period_keys)
+
+```{r  cooee_01_27}
+base::saveRDS(period_keys, file = here::here("data", "period_keys.rda"))
+base::saveRDS(sigkeywords, file = here::here("data", "sigkeywords.rda"))
+```
+
+```{r}
+# load data
+cooee_clean  <- base::readRDS(file = here::here("data", "cooeed_clean.rda"))
+period_keys  <- base::readRDS(file = here::here("data", "period_keys.rda"))
+sigkeywords  <- base::readRDS(file = here::here("data", "sigkeywords.rda"))
+# inspect
+nrow(cooee_clean); nrow(period_keys)
+```
+
+
+# Visualize keywords
+
+```{r covtwit_04_08, echo=T, eval = T, message=FALSE, warning=FALSE}
+p1d <- period_keys %>%
+  dplyr::mutate(Period = dplyr::case_when(Period == "Period_1788-1800" ~ 1,
+                                          Period == "Period_1801-1820" ~ 2,
+                                          Period == "Period_1821-1840" ~ 3,
+                                          Period == "Period_1841-1860" ~ 4,
+                                          Period == "Period_1861-1880" ~ 5,
+                                          Period == "Period_1881-1900" ~ 6,
+                                          TRUE ~ 7)) %>%
+  dplyr::filter(CorrSignificance == "p<.001") %>%
+  dplyr::filter(Word != "other") %>%
+#  dplyr::filter(phi > .001) %>%
+  dplyr::mutate(x2 = log(x2)) %>%
+  dplyr::mutate(x2 = ifelse(Type == "Overuse", x2, -x2)) 
+# inspect
+head(p1d)
+```
+
+
+```{r covtwit_04_09, echo=T, eval = T, message=FALSE, warning=FALSE}
+keyperiod <- ggplot(p1d, aes(x = Period, y = x2)) +
+#  geom_point()+
+  #geom_text(aes(label=Word),hjust=0, vjust=-1,
+  #          position=position_jitter(width=.5,height=1), size = 2) +
+  geom_text(aes(label = Word), check_overlap = TRUE, vjust = 1.5) +
+  labs(x = "Period", y = "Association strength (logged X2)") +
+  scale_x_continuous(breaks = seq(1, 6, 1), 
+                     labels= str_remove_all(names(table(period_keys$Period)), "Period_"), 
+                     limits = c(0.5, 6.5)) +
+  theme_set(theme_bw(base_size = 10)) +
+  theme(legend.position="none",
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        axis.text.x = element_text(angle = 0, size =10),
+        plot.margin = unit(c(.2, .2, .2, .2), "cm")) +
+  coord_cartesian(ylim = c(-10, 10))
+ggsave(file = here::here("images", "Keyterms_Period.png"), 
+         height = 4,  width = 6, dpi = 320)
+keyperiod
+```
+
+
+prepare data
+
+```{r}
+cooee_sent <- tokenize_sentence(cooee_clean$Text_semiclean) %>%
+  unlist() %>%
+  tolower %>%
+  stemDocument()
+# check
+length(cooee_sent); head(cooee_sent)
+```
+
+
+```{r}
+# convert to corpus
+cooee_corpus <- corpus(cooee_sent)
+```
+
+
+reduce sig keywords
+
+```{r}
+sigkeywords <- sigkeywords %>%
+  dplyr::arrange(-phi) %>%
+  dplyr::filter(phi > 0.0175)
+# inspect
+head(sigkeywords); nrow(sigkeywords)
+```
+
+
+
+# Network
+
+extract uni- to trigrams in cooee
+
+```{r}
+# tokenize, tolower, remove stopwords and create ngrams
+cooee_toks <- tokens(cooee_clean$Text_clean) 
+cooee_tokngrms <- tokens_ngrams(cooee_toks, n = 1)
+cooee_ngrmfreq <- cooee_clean %>% 
+  group_by(id) %>%
+  tidytext::unnest_ngrams(cooee_tokngrms, Text_clean, n = 1, n_min = 1, ngram_delim = "_") %>% 
+  dplyr::count(cooee_tokngrms) %>%
+  dplyr::rename("letter" = colnames(.)[1],
+                "word" = colnames(.)[2],
+                "freq" = colnames(.)[3]) %>%
+  dplyr::filter(word %in% sigkeywords$Word) %>% 
+  tidyr::spread(word, freq) %>% 
+  replace(is.na(.), 0)
+# remove letter
+cooee_ngrmfreq <-cooee_ngrmfreq[, 2:ncol(cooee_ngrmfreq)]
+# inspect
+cooee_ngrmfreq
+```
+
+create dfm
+
+```{r}
+# create a document feature matrix
+cooee_dfm <- quanteda::as.dfm(cooee_ngrmfreq)
+# create feature co-occurrence matrix
+cooee_fcm <- quanteda::fcm(cooee_dfm)
+# inspect data
+head(cooee_fcm)
+```
+
+generate network
+
+```{r}
+cnet <- quanteda.textplots::textplot_network(cooee_fcm, 
+                                     min_freq = .5, 
+                                     edge_alpha = 0.25, 
+                                     edge_color = "gray50",
+                                     vertex_labelsize = log(rowSums(cooee_fcm))/3,
+                                     vertex_size = .5,
+                                     max.overlaps = max.overlaps*2 )
+ggsave(file = here::here("images", "net_cooee.png"), 
+         height = 4,  width = 6, dpi = 320)
+# inspect
+cnet
+```
+
+
+
+# Topic Modelling
+
+
+Create corpus and DTM
+
+```{r}
+toks_cooee <- tokens(cooee_corpus, 
+                    remove_punct = TRUE, 
+                    remove_numbers = TRUE, 
+                    remove_symbol = TRUE)
+dfmat_cooee <- dfm(toks_cooee) %>% 
+              dfm_trim(min_termfreq = 0.2, 
+                       termfreq_type = "quantile",
+                       max_docfreq = 0.2, 
+                       docfreq_type = "prop")
+# inspect
+dfmat_cooee[1:10, 1:10]
+```
+
+## Unsupervised LDA
+
+change k to set different N of topics
+
+```{r}
+# set seed
+set.seed(1234)
+# generate model
+tmod_lda <- seededlda::textmodel_lda(dfmat_cooee, k = 6)
+readr::write_delim(as.data.frame(terms(tmod_lda, 10)), here::here("tables", "topic_keys.txt"), delim = "\t")
+# inspect
+terms(tmod_lda, 10)
+```
+
+## Supervised LDA
+
+```{r}
+# semisupervised LDA
+dict <- dictionary(list(family = c("family", "dear", "home", "mother",
+                                   "father", "son", "daugther"),
+                        journey = c("ship", "wind", "ocean", "travel", "arriv", "board"),
+                        landscape = c("creek", "river", "australia", "hill", "water"),
+                        exploration = c("camp", "camel", "hors*"),
+                        indiginous = c("black", "nativ*", "aborig*", "chief"),
+                        employment = c("work", "money", "pay", "week", "good", "gold")))
+tmod_slda <- textmodel_seededlda(dfmat_cooee, dict, residual = TRUE, min_termfreq = 10)
+terms(tmod_slda)
+```
+
+save keyterms
+
+```{r}
+readr::write_delim(as.data.frame(terms(tmod_slda)), here::here("tables", "topic_keys.txt"), delim = "\t")
+# inspect
+terms(tmod_slda, 10)
+```
+
+
+inspect key terms
+
+```{r}
+topics(tmod_slda)
+```
+
+check predicted topics
+
+
+```{r}
+length(topics(tmod_slda))
+```
+
+
+```{r}
+head(topics(tmod_slda), 20)
+```
+
+# Topic by period
+
+create index of how many sentences are in each letter
+
+```{r}
+cooee_idx <- sapply(cooee_clean$Text_semiclean, function(x){
+  x <- tokenize_sentence(x)
+  x <- sapply(x, function(y){ length(y) })
+})
+cooee_idx <- as.vector(cooee_idx)
+# inspect
+head(cooee_idx)
+```
+
+generate data frame with topic for each sentence plus period
+
+```{r}
+Letters <- rep(cooee_clean$Nr, cooee_idx)
+Date <- rep(cooee_clean$YearWriting, cooee_idx)
+Period <- rep(cooee_clean$Datecat, cooee_idx)
+Topics <- topics(tmod_slda)
+Id <- 1:length(Topics)
+# generate df
+cooee_df <- data.frame(Id, Letters, Date, Period, Topics) %>%
+  dplyr::group_by(Period, Topics) %>%
+  dplyr::summarise(Freq = n()) %>%
+  dplyr::ungroup() %>%
+  dplyr::mutate(Topics = dplyr::case_when(Topics == "family" ~ "Topic1_family",
+                                          Topics == "journey" ~ "Topic2_journey",
+                                          Topics == "landscape" ~ "Topic3_landscape",
+                                          Topics == "exploration" ~ "Topic4_exploration",
+                                          Topics == "indiginous" ~ "Topic5_indiginous",
+                                          Topics == "employment" ~ "Topic6_eployment",
+                                          Topics == "other" ~ "Topic7_other")) %>%
+  tidyr::drop_na() %>%
+  dplyr::group_by(Period) %>%
+  dplyr::mutate(Sum = sum(Freq),
+                Percent = round(Freq/Sum*100, 1))
+# save data
+readr::write_delim(cooee_df, here::here("tables", "cooee_df.txt"), delim = "\t")
+# inspect
+head(cooee_df, 10)
+```
+
+plot
+
+```{r}
+cooee_df %>%
+  ggplot(aes(x = Period, y = Percent, group = Topics, fill = Topics)) +
+  geom_bar(stat = "identity", position="stack") +
+  #scale_fill_grey() +
+  scale_fill_brewer(palette="Dark2") +
+  theme(legend.position="top",
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        axis.text.x = element_text(angle = 0, size =10)) +
+  scale_y_continuous(name = "Proportion (%)", 
+                   breaks = seq(0, 100, 25), 
+                   labels = seq(0, 100, 25), 
+                   limits = c(0, 105))
+ggsave(file = here::here("images", "topic_cooee_col.png"), 
+         height = 4,  width = 7.5, dpi = 320)
+```
+
+
+# Outro
+
+```{r  cooee_01_29}
+sessionInfo()
+```
+
+
+# References
+
