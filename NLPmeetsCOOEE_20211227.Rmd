@@ -14,15 +14,13 @@ This document shows an analysis of Corpus of Oz Early English  (COOEE) [@fritz20
 
 ## Aims
 
-* Find keywords  (part 2)
+* Find keywords 
 
-* Check for distribution of keywords by date (mosaic plot)  (part 2)
+* Find keywords for periods
 
-* Create network of keywords (network analysis)  (part 2)
+* Create network of keywords (network analysis) 
 
-* Find topics (topic modeling) (part 3)
-
-* Error analysis (misspelled words, words not in dictionary) (part 4)
+* Find topics (topic modeling) 
 
 # Data Processing
 
@@ -146,7 +144,7 @@ Process and clean data
 
 ```{r cooee_01_13, warning=F, message=F}
 # clean files
-cooeed_clean <- cooeed %>%
+cooee_clean <- cooeed %>%
   dplyr::mutate(Text = Rawtext) %>%
   dplyr::mutate(Text = stringr::str_remove_all(Text, "\\[/{0,1}.*?\\]"),
                 Text = stringr::str_remove_all(Text, "\\</{0,1}.*?\\>"),
@@ -164,7 +162,7 @@ cooeed_clean <- cooeed %>%
                 Words = stringr::str_squish(Words),
                 Words = stringr::str_count(Words, "\\w+"))
 # inspect
-head(cooeed_clean)
+head(cooee_clean)
 ```
 
 
@@ -178,7 +176,7 @@ stopwords_regex = paste(stopwords('en'), collapse = '\\b|\\b')
 custregex <- c("\\b|\\bone\\b|\\b[:alnum:]{1,3}\\b|\\b[0-9]{1,3}[a-z]{2,2}\\b|\\balso\\b|\\bmust\\b|\\bmany\\b|\\bmuch\\b|\\bmevery\\b")
 stopwords_regex = paste0('\\b', stopwords_regex, custregex)
 # remove stopwords
-cooeed_clean <- cooeed_clean %>%
+cooee_clean <- cooee_clean %>%
   dplyr::filter(Register == "PrW") %>%
   dplyr::mutate(Text_clean = stringr::str_remove_all(tolower(Text), stopwords_regex),
                 Text_clean = stringr::str_remove_all(Text_clean, "[^[:alpha:] ]"),
@@ -186,9 +184,9 @@ cooeed_clean <- cooeed_clean %>%
   dplyr::mutate(Text_semiclean = stringr::str_remove_all(Text, stopwords_regex),
                 Text_semiclean = stringr::str_squish(Text_semiclean))
 # save data
-base::saveRDS(cooeed_clean, file = here::here("data", "cooeed_clean.rda"))
+base::saveRDS(cooee_clean, file = here::here("data", "cooee_clean.rda"))
 # inspect
-head(cooeed_clean)
+head(cooee_clean)
 ```
 
 
@@ -197,7 +195,7 @@ head(cooeed_clean)
 Check how many letters were written in each period
 
 ```{r cooee_01_19}
-table(cooeed_clean$Datecat)
+table(cooee_clean$Datecat)
 ```
 
 # CoRD (control)
@@ -218,7 +216,7 @@ control <- control %>%
   as.data.frame() %>%
   dplyr::rename(Rawtext = colnames(.)[1])
 # inspect
-str(control)
+head(control, 2)
 ```
 
 Generate data frame
@@ -247,15 +245,15 @@ control_clean <- control %>%
 # save data
 base::saveRDS(control_clean, file = here::here("data", "control_clean.rda"))
 # inspect data
-head(control_clean)
+head(control_clean, 2)
 ```
 
 # Corpus Exploration
 
 ## COOEE
 
-```{r train, message=F, warning=F}
-cooeetb <- cooeed_clean %>%
+```{r nlpcooee_11, message=F, warning=F}
+cooeetb <- cooee_clean %>%
   dplyr::select(Birth, Gender, Origin, Age, Status, Arrival, Abode, YearWriting, 
                 PlaceWriting, TextT, Words, Text_clean, Datecat) %>%
   dplyr::mutate(Gender = dplyr::case_when(Gender == "m" ~ "male", 
@@ -319,7 +317,7 @@ head(control_clean)
 
 generate overview table for control corpus by year
 
-```{r train, message=F, warning=F}
+```{r nlpcoee_13, message=F, warning=F}
 controltb <- control_clean %>%
   dplyr::select(YearWriting, Text, Datecat) %>%
   dplyr::mutate(Text = stringr::str_squish(Text)) %>%
@@ -351,7 +349,7 @@ Generate a geo-spacial map showing where documents originated.
 check number of letters by region
 
 ```{r}
-table(cooeed_clean$PlaceWriting)
+table(cooee_clean$PlaceWriting)
 ```
 
 process data
@@ -475,7 +473,7 @@ head(cooee_clean)
 
 Create training set
 
-```{r train, message=F, warning=F}
+```{r nlpcooee_17, message=F, warning=F}
 train_c <- control_clean %>%
   dplyr::mutate(Label = "nonCOOEE") %>%
   dplyr::select(id, Text_clean, Label) 
@@ -491,7 +489,7 @@ extract uni- to trigrams in cooee
 
 ```{r}
 # tokenize, tolower, remove stopwords and create ngrams
-cooee_toks <- tokens(train_cooee$Text_clean) 
+cooee_toks <- quanteda::tokens(train_cooee$Text_clean) 
 cooee_tokngrms <- tokens_ngrams(cooee_toks, n = 1:3)
 cooee_ngrmfreq <- train_cooee %>% 
   tidytext::unnest_ngrams(cooee_tokngrms, Text_clean, n = 3, n_min = 1, ngram_delim = "_") %>% 
@@ -506,22 +504,22 @@ extract uni- to trigrams in corpus of late 18 century prose
 
 ```{r}
 # tokenize, tolower, remove stopwords and create ngrams
-c_toks <- tokens(train_c$Text_clean) 
+c_toks <- quanteda::tokens(train_c$Text_clean) 
 c_tokngrms <- tokens_ngrams(c_toks, n = 1:3)
 c_ngrmfreq <- train_c %>% 
   tidytext::unnest_ngrams(c_tokngrms, Text_clean, n = 3, n_min = 1, ngram_delim = "_") %>% 
   dplyr::count(c_tokngrms) %>%
   dplyr::rename("ngram" = colnames(.)[1],
-                "cl18p" = colnames(.)[2])
+                "cord" = colnames(.)[2])
 # inspect
-c_ngrmfreq
+head(c_ngrmfreq)
 ```
 
 combine
 
 ```{r}
 ngramfreqtb <- dplyr::full_join(cooee_ngrmfreq, c_ngrmfreq, by = "ngram") %>%
-  tidyr::replace_na(list(cooee = 0, cl18p = 0))
+  tidyr::replace_na(list(cooee = 0, cord = 0))
 # inspect
 head(ngramfreqtb)
 ```
@@ -531,13 +529,13 @@ Prepare for statistical extraction of keywords
 
 ```{r}
 keywordtb <- ngramfreqtb %>%
-  dplyr::mutate(Total = cooee+cl18p) %>%
+  dplyr::mutate(Total = cooee+cord) %>%
   dplyr::filter(Total > 10) %>%
   dplyr::mutate(TotalTarget = sum(cooee),
-                TotalNonTarget = sum(cl18p),
+                TotalNonTarget = sum(cord),
                 NRows = length(ngram)) %>%
   dplyr::rename(Target = cooee,
-                NonTarget = cl18p,
+                NonTarget = cord,
                 Word = ngram) %>%
   dplyr::select(-Total)
 # inspect data
@@ -568,14 +566,14 @@ Select keywords with substantive effect size (phi > .02)
 # filter keywords with phi > .2
 bigsigkeywords <- sigkeywords %>%
   dplyr::filter(phi > .02)
+# save data to disc
 readr::write_delim(bigsigkeywords, here::here("tables", "bigsigkeywords.txt"), delim = "\t")
 # inspect
 bigsigkeywords
 ```
 
 
-
-Extract relative frequency of Irish letters
+Extract relative frequency in COOEE
 
 ```{r covtwit_01_13, echo=T, eval = T, message=FALSE, warning=FALSE}
 cooeeterms <- sigkeywords$Word
@@ -692,8 +690,6 @@ convert data: have date, ngram, and frequencies of ngrams
 
 ```{r}
 # tokenize and create ngram freqs
-cooee_toks <- tokens(cooee_clean$Text_clean) 
-cooee_tokngrms <- tokens_ngrams(cooee_toks, n = 1)
 cooee_ngrmfreq <- cooee_clean %>%
   dplyr::select(id, Datecat, Text_clean) %>%
   dplyr::group_by(Datecat) %>%
@@ -775,7 +771,7 @@ base::saveRDS(sigkeywords, file = here::here("data", "sigkeywords.rda"))
 
 ```{r}
 # load data
-cooee_clean  <- base::readRDS(file = here::here("data", "cooeed_clean.rda"))
+cooee_clean  <- base::readRDS(file = here::here("data", "cooee_clean.rda"))
 period_keys  <- base::readRDS(file = here::here("data", "period_keys.rda"))
 sigkeywords  <- base::readRDS(file = here::here("data", "sigkeywords.rda"))
 # inspect
@@ -863,8 +859,6 @@ extract uni- to trigrams in cooee
 
 ```{r}
 # tokenize, tolower, remove stopwords and create ngrams
-cooee_toks <- tokens(cooee_clean$Text_clean) 
-cooee_tokngrms <- tokens_ngrams(cooee_toks, n = 1)
 cooee_ngrmfreq <- cooee_clean %>% 
   group_by(id) %>%
   tidytext::unnest_ngrams(cooee_tokngrms, Text_clean, n = 1, n_min = 1, ngram_delim = "_") %>% 
@@ -916,7 +910,7 @@ cnet
 Create corpus and DTM
 
 ```{r}
-toks_cooee <- tokens(cooee_corpus, 
+toks_cooee <- quanteda::tokens(cooee_corpus, 
                     remove_punct = TRUE, 
                     remove_numbers = TRUE, 
                     remove_symbol = TRUE)
@@ -970,7 +964,7 @@ terms(tmod_slda, 10)
 inspect key terms
 
 ```{r}
-topics(tmod_slda)
+topics(tmod_slda)[1:20]
 ```
 
 check predicted topics
